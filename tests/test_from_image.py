@@ -32,3 +32,10 @@ def test_from_image_passes_scale_through():
     minx, miny, maxx, maxy = packer.shape.bounds
     assert abs((maxx - minx) - 120) < 3
     assert abs((maxy - miny) - 80) < 3
+
+
+def test_from_image_accepts_path(tmp_path):
+    p = str(tmp_path / "plan.png")
+    cv2.imwrite(p, make_plan_image())
+    packer = GridPacker.from_image(p, cell_width=20, cell_height=20)
+    assert len(packer.obstacles) == 1

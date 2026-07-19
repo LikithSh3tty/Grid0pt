@@ -38,9 +38,12 @@ def _to_grayscale(image: Image) -> np.ndarray:
             raise ValueError(f"could not read image: {image}")
         return img
     img = np.asarray(image)
+    if np.issubdtype(img.dtype, np.floating) and img.max() <= 1.0:
+        img = img * 255.0
+    img = img.astype(np.uint8)
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img.astype(np.uint8)
+    return img
 
 
 def _binarize(gray: np.ndarray) -> np.ndarray:
@@ -105,6 +108,12 @@ def polygons_from_image(
     Returns (shape, obstacles): the largest detected region as a shapely
     Polygon, and the enclosed holes inside it as obstacle Polygons, in y-up
     coordinates scaled by `scale`.
+
+    Note: an unfilled outline is distinguished from a filled shape by area
+    ratio (RING_RATIO): if an enclosed hole covers >= 85% of the region, the
+    region is treated as a pen-stroke ring and collapses to the hole's
+    interior. A genuinely filled "picture frame" shape with a hole that large
+    will therefore be misread as an outline.
     """
     gray = _to_grayscale(image)
     solid = _solidify(_binarize(gray))

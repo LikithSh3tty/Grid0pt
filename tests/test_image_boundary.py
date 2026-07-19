@@ -96,3 +96,9 @@ def test_sketch_with_drawn_obstacle():
     assert abs(shape.area - 240 * 160) / (240 * 160) < 0.10
     assert len(obstacles) == 1
     assert abs(obstacles[0].area - 40 * 30) / (40 * 30) < 0.30
+
+
+def test_float_array_input_is_normalized():
+    shape, obstacles = polygons_from_image(make_plan_image().astype(np.float64) / 255.0)
+    assert abs(shape.area - 240 * 160) / (240 * 160) < 0.05
+    assert len(obstacles) == 1
