@@ -7,9 +7,9 @@ usable by GridPacker: the outer boundary becomes the shape, enclosed interior
 regions become obstacles.
 
 Pipeline: grayscale -> Otsu threshold (auto polarity) -> morphological close
-(seals gaps in drawn outlines) -> flood-fill to solidify enclosed regions ->
-contour hierarchy (RETR_CCOMP) -> Douglas-Peucker simplification -> y-flip
-and optional unit scaling.
+(seals gaps in drawn outlines) -> contour hierarchy (RETR_TREE) with ring
+detection (an unfilled outline collapses to its enclosed interior) ->
+Douglas-Peucker simplification -> y-flip and optional unit scaling.
 
 Requires: opencv-python, numpy, shapely
 """
@@ -23,6 +23,12 @@ import numpy as np
 from shapely.geometry import Polygon
 
 Image = Union[str, np.ndarray]
+
+DETECTION_ERROR = "no boundary detected — check contrast or close gaps in the outline"
+
+# a contour whose child covers at least this fraction of it is an unfilled
+# outline (pen-stroke ring); the usable region is the child interior
+RING_RATIO = 0.85
 
 
 def _to_grayscale(image: Image) -> np.ndarray:
@@ -72,6 +78,16 @@ def _contour_to_polygon(cnt: np.ndarray, simplify_tol: float,
     return poly
 
 
+def _children(hierarchy: np.ndarray, idx: int) -> List[int]:
+    """Indices of the direct children of contour `idx` in a RETR_TREE hierarchy."""
+    out = []
+    child = hierarchy[idx][2]
+    while child != -1:
+        out.append(child)
+        child = hierarchy[child][0]
+    return out
+
+
 def polygons_from_image(
     image: Image,
     *,
@@ -95,28 +111,34 @@ def polygons_from_image(
     img_h = gray.shape[0]
 
     contours, hierarchy = cv2.findContours(
-        solid, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        solid, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        raise ValueError(
-            "no boundary detected — check contrast or close gaps in the outline")
+        raise ValueError(DETECTION_ERROR)
     hierarchy = hierarchy[0]  # (N, 4): [next, prev, first_child, parent]
 
     # largest top-level contour above the noise floor -> the shape
-    top = [i for i, hi in enumerate(hierarchy)
-           if hi[3] == -1 and cv2.contourArea(contours[i]) >= min_area]
+    top = [i for i, h in enumerate(hierarchy)
+           if h[3] == -1 and cv2.contourArea(contours[i]) >= min_area]
     if not top:
-        raise ValueError(
-            "no boundary detected — check contrast or close gaps in the outline")
+        raise ValueError(DETECTION_ERROR)
     shape_idx = max(top, key=lambda i: cv2.contourArea(contours[i]))
+    shape_area = cv2.contourArea(contours[shape_idx])
+
+    # ring detection: an unfilled outline is a thin ring whose inner edge
+    # encloses almost the same area as its outer edge; the usable region is
+    # that interior, and anything drawn inside it becomes an obstacle
+    inner = [i for i in _children(hierarchy, shape_idx)
+             if cv2.contourArea(contours[i]) >= RING_RATIO * shape_area]
+    if inner:
+        shape_idx = max(inner, key=lambda i: cv2.contourArea(contours[i]))
 
     shape = _contour_to_polygon(contours[shape_idx], simplify_tol, img_h, scale)
     if shape is None:
-        raise ValueError(
-            "no boundary detected — check contrast or close gaps in the outline")
+        raise ValueError(DETECTION_ERROR)
 
     obstacles: List[Polygon] = []
-    for i, hi in enumerate(hierarchy):
-        if hi[3] != shape_idx or cv2.contourArea(contours[i]) < min_area:
+    for i in _children(hierarchy, shape_idx):
+        if cv2.contourArea(contours[i]) < min_area:
             continue
         poly = _contour_to_polygon(contours[i], simplify_tol, img_h, scale)
         if poly is not None:

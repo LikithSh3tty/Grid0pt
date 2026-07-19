@@ -79,3 +79,20 @@ def test_path_input_roundtrip(tmp_path):
     shape, obstacles = polygons_from_image(p)
     assert abs(shape.area - 240 * 160) / (240 * 160) < 0.05
     assert len(obstacles) == 1
+
+
+def test_sketch_interior_is_shape_not_obstacle():
+    img = np.zeros((200, 300), np.uint8)
+    cv2.rectangle(img, (30, 20), (269, 179), 255, thickness=3)
+    _, obstacles = polygons_from_image(img)
+    assert obstacles == []
+
+
+def test_sketch_with_drawn_obstacle():
+    img = np.zeros((200, 300), np.uint8)
+    cv2.rectangle(img, (30, 20), (269, 179), 255, thickness=3)
+    cv2.rectangle(img, (100, 80), (139, 109), 255, thickness=-1)
+    shape, obstacles = polygons_from_image(img)
+    assert abs(shape.area - 240 * 160) / (240 * 160) < 0.10
+    assert len(obstacles) == 1
+    assert abs(obstacles[0].area - 40 * 30) / (40 * 30) < 0.30
