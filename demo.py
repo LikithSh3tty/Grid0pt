@@ -58,7 +58,36 @@ def l_shape_example():
     plt.close(fig)
 
 
+def image_example():
+    # synthesize a "floor plan": white L-shaped room with two dark obstacles,
+    # then let from_image() detect the boundary and run the optimizer on it
+    import cv2
+    import numpy as np
+
+    img = np.zeros((400, 600), np.uint8)
+    cv2.fillPoly(img, [np.array([(40, 40), (560, 40), (560, 220),
+                                 (300, 220), (300, 360), (40, 360)])], 255)
+    cv2.rectangle(img, (120, 120), (200, 180), 0, thickness=-1)
+    cv2.circle(img, (450, 130), 35, 0, thickness=-1)
+    cv2.imwrite("demo_plan.png", img)
+
+    packer = GridPacker.from_image("demo_plan.png", cell_width=40, cell_height=40)
+    best, _ = packer.optimize(steps=10)
+
+    print("\nIMAGE")
+    print(f"  detected : shape area={packer.shape.area:.0f}px², "
+          f"{len(packer.obstacles)} obstacle(s)")
+    print("  optimized:", best)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    packer.plot(best, ax=ax)
+    fig.tight_layout()
+    fig.savefig("result_image.png", dpi=110)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     rectangle_example()
     l_shape_example()
-    print("\nSaved: result_rectangle.png, result_lshape.png")
+    image_example()
+    print("\nSaved: result_rectangle.png, result_lshape.png, result_image.png")
