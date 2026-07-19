@@ -91,6 +91,31 @@ class GridPacker:
         # pivot used for any rotation so results are reproducible
         self._pivot = self.shape.centroid
 
+    @classmethod
+    def from_image(
+        cls,
+        image,
+        *,
+        cell_width: float = 1.0,
+        cell_height: float = 1.0,
+        simplify_tol: float = 2.0,
+        min_area: float = 64.0,
+        scale: float = 1.0,
+    ) -> "GridPacker":
+        """Build a GridPacker from an image (file path or numpy array).
+
+        The outer boundary detected in the image becomes the shape; enclosed
+        interior regions become obstacles. Coordinates are in pixels (y-up)
+        unless `scale` (units per pixel) is given. See
+        image_boundary.polygons_from_image for the detection parameters.
+        """
+        from image_boundary import polygons_from_image
+
+        shape, obstacles = polygons_from_image(
+            image, simplify_tol=simplify_tol, min_area=min_area, scale=scale)
+        return cls(shape, obstacles,
+                   cell_width=cell_width, cell_height=cell_height)
+
     # ------------------------------------------------------------------ #
     # cell generation + classification
     # ------------------------------------------------------------------ #
