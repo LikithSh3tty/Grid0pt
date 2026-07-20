@@ -1,11 +1,14 @@
 import { useState } from "react";
 import ImageInput from "./components/ImageInput";
+import DrawCanvas from "./components/DrawCanvas";
 import ResultView from "./components/ResultView";
-import { packImage } from "./api";
+import { packImage, packPolygon } from "./api";
 import "./App.css";
 
 export default function App() {
+  const [mode, setMode] = useState("image");
   const [file, setFile] = useState(null);
+  const [polygons, setPolygons] = useState([]);
   const [cellWidth, setCellWidth] = useState(40);
   const [cellHeight, setCellHeight] = useState(40);
   const [rotate, setRotate] = useState(false);
@@ -15,13 +18,17 @@ export default function App() {
 
   async function handleRun() {
     setError(null);
-    if (!file) {
-      setError("Choose an image first.");
-      return;
-    }
     setLoading(true);
     try {
-      const data = await packImage(file, Number(cellWidth), Number(cellHeight), rotate);
+      let data;
+      if (mode === "image") {
+        if (!file) throw new Error("Choose an image first.");
+        data = await packImage(file, Number(cellWidth), Number(cellHeight), rotate);
+      } else {
+        if (polygons.length === 0) throw new Error("Draw or enter a shape first.");
+        const [shape, ...obstacles] = polygons;
+        data = await packPolygon(shape, obstacles, Number(cellWidth), Number(cellHeight), rotate);
+      }
       setResult(data);
     } catch (err) {
       setError(err.message);
@@ -34,6 +41,23 @@ export default function App() {
   return (
     <div className="app">
       <h1>Grid Packer</h1>
+
+      <div className="tabs">
+        <button
+          type="button"
+          className={mode === "image" ? "tab active" : "tab"}
+          onClick={() => setMode("image")}
+        >
+          Image
+        </button>
+        <button
+          type="button"
+          className={mode === "draw" ? "tab active" : "tab"}
+          onClick={() => setMode("draw")}
+        >
+          Draw
+        </button>
+      </div>
 
       <div className="controls">
         <label>
@@ -65,7 +89,11 @@ export default function App() {
         </div>
       )}
 
-      <ImageInput onFileSelected={setFile} />
+      {mode === "image" ? (
+        <ImageInput onFileSelected={setFile} />
+      ) : (
+        <DrawCanvas polygons={polygons} onPolygonsChange={setPolygons} />
+      )}
 
       <ResultView result={result} />
     </div>

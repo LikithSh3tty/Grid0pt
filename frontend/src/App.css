@@ -166,3 +166,91 @@ button:disabled {
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 1rem;
+  font-weight: 500;
+}
+
+.tab.active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.draw-panel {
+  margin-bottom: 1.5rem;
+}
+
+.draw-svg {
+  width: 100%;
+  height: 22rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: crosshair;
+}
+
+.draw-shape {
+  fill: rgba(92, 184, 92, 0.15);
+  stroke: var(--text);
+  stroke-width: 0.3%;
+}
+
+.draw-obstacle {
+  fill: rgba(244, 162, 89, 0.25);
+  stroke: var(--accent-2);
+  stroke-width: 0.3%;
+}
+
+.draw-current {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 0.3%;
+  stroke-dasharray: 1 1;
+}
+
+.draw-point {
+  fill: var(--text);
+}
+
+.draw-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.draw-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.draw-text {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.text-error {
+  color: #ff9d94;
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
