@@ -1,0 +1,95 @@
+"""
+packer_service.py
+==================
+
+Pure packing logic shared by the HTTP layer (server.py). Wraps GridPacker
+and image_boundary so packing can be tested directly, without going through
+FastAPI or HTTP.
+"""
+from __future__ import annotations
+
+from typing import List, Sequence, Tuple
+
+import cv2
+import numpy as np
+from shapely.geometry import Polygon
+
+from grid_packer import GridPacker
+
+Point = Tuple[float, float]
+
+DEFAULT_STEPS = 10
+ROTATE_ANGLES = tuple(range(0, 90, 15))
+
+
+def _polygon_coords(poly: Polygon) -> List[Point]:
+    return [(float(x), float(y)) for x, y in poly.exterior.coords[:-1]]
+
+
+def _placement_to_result(packer: GridPacker, best) -> dict:
+    return {
+        "shape": _polygon_coords(packer.shape),
+        "obstacles": [_polygon_coords(o) for o in packer.obstacles],
+        "complete_cells": [_polygon_coords(c) for c in best.complete_cells],
+        "partial_cells": [_polygon_coords(c) for c in best.partial_cells],
+        "stats": {
+            "complete": best.complete,
+            "partial": best.partial,
+            "coverage": best.coverage,
+            "dx": best.dx,
+            "dy": best.dy,
+            "angle": best.angle,
+        },
+    }
+
+
+def _to_polygon(points: Sequence[Point], label: str) -> Polygon:
+    if len(points) < 3:
+        raise ValueError(f"{label} must have at least 3 points")
+    poly = Polygon(points)
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+    if poly.is_empty or poly.geom_type != "Polygon":
+        raise ValueError(f"{label} polygon is invalid or self-intersecting")
+    return poly
+
+
+def run_packing(
+    shape_points: Sequence[Point],
+    obstacle_points: Sequence[Sequence[Point]],
+    cell_width: float,
+    cell_height: float,
+    rotate: bool,
+) -> dict:
+    """Pack a manually specified polygon. Raises ValueError on bad input."""
+    if cell_width <= 0 or cell_height <= 0:
+        raise ValueError("cell dimensions must be positive")
+
+    shape = _to_polygon(shape_points, "shape")
+    obstacles = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
+
+    packer = GridPacker(shape, obstacles, cell_width=cell_width, cell_height=cell_height)
+    angles = ROTATE_ANGLES if rotate else (0.0,)
+    best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
+    return _placement_to_result(packer, best)
+
+
+def run_packing_from_image(
+    image_bytes: bytes,
+    cell_width: float,
+    cell_height: float,
+    rotate: bool,
+) -> dict:
+    """Pack the boundary detected in raw image bytes. Raises ValueError on bad input."""
+    if cell_width <= 0 or cell_height <= 0:
+        raise ValueError("cell dimensions must be positive")
+
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise ValueError("could not read image: unsupported or corrupt file")
+
+    packer = GridPacker.from_image(img, cell_width=cell_width, cell_height=cell_height)
+    angles = ROTATE_ANGLES if rotate else (0.0,)
+    best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
+    return _placement_to_result(packer, best)
