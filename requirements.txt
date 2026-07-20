@@ -2,3 +2,6 @@ numpy
 shapely
 matplotlib
 opencv-python
+fastapi
+uvicorn
+python-multipart
