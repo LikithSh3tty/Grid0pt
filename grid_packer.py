@@ -88,6 +88,12 @@ class GridPacker:
         else:
             self.usable = shape
 
+        # An empty usable region has NaN bounds, which would blow up cell
+        # generation with an opaque "cannot convert float NaN to integer".
+        if self.usable.is_empty:
+            raise ValueError(
+                "no usable area left: the obstacles cover the entire shape")
+
         # pivot used for any rotation so results are reproducible
         self._pivot = self.shape.centroid
 

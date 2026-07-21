@@ -19,7 +19,24 @@ from grid_packer import GridPacker
 Point = Tuple[float, float]
 
 DEFAULT_STEPS = 10
-ROTATE_ANGLES = tuple(range(0, 90, 15))
+ROTATE_STEP = 15
+
+
+def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
+    """Grid angles worth testing, in degrees.
+
+    Translation needs no direction sweep: the grid is periodic, so the offsets
+    dx in [0, cw) / dy in [0, ch) that optimize() already scans cover every
+    possible shift in every direction (shifting left by k is the same grid as
+    shifting right by cw - k).
+
+    Rotation is different. Turning a cw x ch grid by 180 deg reproduces it, so
+    the search space is [0, 180). Only when cells are SQUARE does 90 deg also
+    reproduce it -- for rectangular cells a quarter turn swaps cw and ch, which
+    is a genuinely different packing and can be the better one.
+    """
+    period = 90 if cell_width == cell_height else 180
+    return tuple(range(0, period, ROTATE_STEP))
 
 
 def _polygon_coords(poly: Polygon) -> List[Point]:
@@ -69,7 +86,7 @@ def run_packing(
     obstacles = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
 
     packer = GridPacker(shape, obstacles, cell_width=cell_width, cell_height=cell_height)
-    angles = ROTATE_ANGLES if rotate else (0.0,)
+    angles = _rotate_angles(cell_width, cell_height) if rotate else (0.0,)
     best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
     return _placement_to_result(packer, best)
 
@@ -90,6 +107,6 @@ def run_packing_from_image(
         raise ValueError("could not read image: unsupported or corrupt file")
 
     packer = GridPacker.from_image(img, cell_width=cell_width, cell_height=cell_height)
-    angles = ROTATE_ANGLES if rotate else (0.0,)
+    angles = _rotate_angles(cell_width, cell_height) if rotate else (0.0,)
     best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
     return _placement_to_result(packer, best)
