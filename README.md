@@ -24,12 +24,14 @@ The outline doesn't have to be a rectangle. L-shapes, irregular rooms, anything 
 
 ```
 grid/
-├── grid_packer.py       # GridPacker: the offset/rotation sweep and cell classification
-├── image_boundary.py    # image -> (shape, obstacles) via OpenCV contour detection
-├── packer_service.py    # pure packing logic shared by the API and tests
-├── server.py            # FastAPI app: /api/pack/polygon, /api/pack/image, serves frontend/dist
-├── demo.py               # standalone script demo of GridPacker
-├── tests/                # pytest suite for the packer, image boundary, and API
+├── backend/
+│   ├── grid_packer.py       # GridPacker: the offset/rotation sweep and cell classification
+│   ├── image_boundary.py    # image -> (shape, obstacles) via OpenCV contour detection
+│   ├── packer_service.py    # pure packing logic shared by the API and tests
+│   ├── server.py            # FastAPI app: /api/pack/polygon, /api/pack/image, serves ../frontend/dist
+│   ├── demo.py               # standalone script demo of GridPacker
+│   ├── requirements.txt
+│   └── tests/                # pytest suite for the packer, image boundary, and API
 └── frontend/
     ├── src/
     │   ├── App.jsx               # tabs, controls, run/error state
@@ -48,6 +50,7 @@ You'll need Python 3.10+ and Node 18+.
 ### 1. Backend
 
 ```bash
+cd backend
 pip install -r requirements.txt
 python server.py
 ```
@@ -75,6 +78,7 @@ npm run build
 ### Tests
 
 ```bash
+cd backend
 python -m pytest -v
 ```
 

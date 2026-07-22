@@ -3,9 +3,9 @@ server.py
 =========
 
 FastAPI app exposing the grid packer over HTTP, and serving the built React
-frontend (frontend/dist) as static files.
+frontend (../frontend/dist) as static files.
 
-Run: python server.py
+Run (from the backend/ folder): python server.py
 Then open http://localhost:8000
 """
 from __future__ import annotations
@@ -62,7 +62,7 @@ async def pack_image(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 
