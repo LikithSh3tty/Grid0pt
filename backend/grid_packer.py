@@ -37,6 +37,30 @@ from shapely.ops import unary_union
 from shapely.prepared import prep
 
 
+# --------------------------------------------------------------------------- #
+# coordinate resolution -- ONE quantity, used in two places
+# --------------------------------------------------------------------------- #
+# `_wrap` reduces a critical offset modulo the cell period and rounds it to
+# _COORD_DECIMALS decimals, so the grid line it produces can sit up to
+# 0.5 * 10**-_COORD_DECIMALS away from the wall it was derived from. The
+# rotate-by-(-angle)-then-back trick in `evaluate` adds a few ulp of its own
+# drift on top: a wall computed as 0.4 comes back as 0.40000000000000036.
+#
+# `evaluate`'s containment test must carry that SAME resolution, or a cell that
+# tiles the region exactly is a few ulp short of the wall, `contains` is
+# strictly false, and the flush placement -- precisely the optimum the search
+# exists to find, and precisely what the rotated analysis produces -- is
+# misreported as partial. The rounding below and the tolerance below it are the
+# same quantity seen twice; they are defined together so they cannot drift
+# apart.
+#
+# _GEOM_TOL is 20x the worst-case rounding granularity (so it strictly covers
+# it) and still eight or more orders of magnitude below any cell dimension in
+# use, so it can never absorb a geometrically real overlap.
+_COORD_DECIMALS = 9
+_GEOM_TOL = 10.0 ** -(_COORD_DECIMALS - 1)      # 1e-8 vs 5e-10 of rounding
+
+
 @dataclass
 class Placement:
     """Result of evaluating one grid placement (offset + angle)."""
@@ -85,14 +109,39 @@ def _iter_rings(geom):
 
 
 def _wrap(value: float, period: float) -> float:
-    """Reduce `value` into [0, period), rounded to 9 decimals.
+    """Reduce `value` into [0, period), rounded to _COORD_DECIMALS decimals.
 
     Rounding after the modulo can push a value that sits a hair below the
     period up onto the period itself (e.g. -1e-15 % 10 -> 10.0); that is the
     same offset as 0, so fold it back.
+
+    The rounding is what `_GEOM_TOL` compensates for in `evaluate`: it is what
+    turns a wall at 0.40000000000000036 into a grid line at exactly 0.4.
     """
-    v = round(value % period, 9)
+    v = round(value % period, _COORD_DECIMALS)
     return 0.0 if v >= period else v
+
+
+def _grow(geom, tol: float = _GEOM_TOL):
+    """`geom` widened by `tol` on every side, for a tolerant containment test.
+
+    A positive buffer pushes the exterior out by `tol` and pulls interior rings
+    (obstacles) IN by `tol`, which is exactly the wanted asymmetry: the outer
+    wall becomes tol-forgiving while obstacles become tol-stricter, so the
+    tolerance can never let a cell clip an obstacle. A mitre join keeps convex
+    corners as corners rather than rounding them into arcs, so the result is
+    the true tol-offset of the polygon rather than an inflated hull of it.
+
+    A degenerate `usable` (empty, or a zero-area sliver left by a difference)
+    buffers to an empty or harmless geometry rather than raising, but invalid
+    input can still make GEOS fail; falling back to the un-grown geometry then
+    only costs the tolerance, which is the pre-existing behaviour.
+    """
+    try:
+        grown = geom.buffer(tol, join_style="mitre")
+    except Exception:                           # pragma: no cover - GEOS guard
+        return geom
+    return geom if grown.is_empty else grown
 
 
 def _face_samples(vals: Sequence[float], period: float) -> List[float]:
@@ -202,18 +251,27 @@ class GridPacker:
         Rotation trick: instead of rotating the grid, we rotate the usable
         region by -angle, run an axis-aligned analysis, then rotate the
         resulting cells back by +angle so they line up with the original shape.
+
+        Containment is tested against the usable region grown by `_GEOM_TOL`
+        (see the constant): the offsets fed in here were rounded to that same
+        resolution, so a cell may miss a wall it is meant to be flush with by a
+        few ulp. `intersects` stays on the UN-grown region, so the
+        partial/outside split is unaffected by the tolerance. Both prepared
+        geometries are built once per call -- `evaluate` is the hot primitive,
+        and this must not become per-cell work.
         """
         if angle:
             work = rotate(self.usable, -angle, origin=self._pivot)
         else:
             work = self.usable
 
-        prepared = prep(work)
+        prepared = prep(work)               # exact: partial vs outside
+        tolerant = prep(_grow(work))        # tol-forgiving: complete vs partial
         cells = self._generate_cells(work, dx, dy)
 
         complete, partial = [], []
         for c in cells:
-            if prepared.contains(c):        # wholly inside usable -> complete
+            if tolerant.contains(c):        # wholly inside usable -> complete
                 complete.append(c)
             elif prepared.intersects(c):    # straddles boundary/obstacle -> partial
                 partial.append(c)
@@ -241,8 +299,8 @@ class GridPacker:
         xs, ys = set(), set()
         for ring in geoms:
             for x, y in ring.coords:
-                xs.add(round(x % self.cw, 9))
-                ys.add(round(y % self.ch, 9))
+                xs.add(round(x % self.cw, _COORD_DECIMALS))
+                ys.add(round(y % self.ch, _COORD_DECIMALS))
         return sorted(xs), sorted(ys)
 
     def optimize(
