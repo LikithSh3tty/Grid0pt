@@ -64,6 +64,57 @@ class Placement:
                 f"partial={self.partial}, coverage={self.coverage:.1%})")
 
 
+def _iter_rings(geom):
+    """Yield every ring of a polygonal geometry: exteriors AND interiors.
+
+    `usable` is `shape.difference(obstacles)`, so it may be a Polygon with
+    holes, a MultiPolygon (an obstacle can cut the shape in two) or, in
+    degenerate cases, a GeometryCollection. Non-polygonal parts (stray lines
+    or points left by the difference) carry no cells and are skipped.
+    """
+    gt = geom.geom_type
+    if gt == "Polygon":
+        if geom.is_empty:
+            return
+        yield geom.exterior
+        for ring in geom.interiors:
+            yield ring
+    elif gt in ("MultiPolygon", "GeometryCollection"):
+        for part in geom.geoms:
+            yield from _iter_rings(part)
+
+
+def _wrap(value: float, period: float) -> float:
+    """Reduce `value` into [0, period), rounded to 9 decimals.
+
+    Rounding after the modulo can push a value that sits a hair below the
+    period up onto the period itself (e.g. -1e-15 % 10 -> 10.0); that is the
+    same offset as 0, so fold it back.
+    """
+    v = round(value % period, 9)
+    return 0.0 if v >= period else v
+
+
+def _face_samples(vals: Sequence[float], period: float) -> List[float]:
+    """One representative offset per constant-count interval.
+
+    The critical values cut the offset circle [0, period) into arcs on which
+    N_complete is constant. Evaluating the midpoint of every arc plus every
+    critical value itself therefore sees every value the objective can take.
+
+    Degenerate input (no vertices at all, or a single critical value) is
+    handled: 0.0 is always part of the set, so the circle always has at least
+    one arc and the result is never empty.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+
+    vals = sorted({_wrap(v, period) for v in vals} | {0.0})
+    ext = vals + [vals[0] + period]
+    mids = [_wrap((a + b) / 2.0, period) for a, b in zip(ext, ext[1:])]
+    return sorted(set(mids) | set(vals))
+
+
 class GridPacker:
     def __init__(
         self,
@@ -226,6 +277,86 @@ class GridPacker:
 
         results: List[Placement] = []
         for angle in angles:
+            for dx in dxs:
+                for dy in dys:
+                    results.append(self.evaluate(dx, dy, angle))
+
+        def score(p: Placement):
+            # higher complete is better; fewer partials breaks ties
+            return (p.complete - partial_penalty * p.partial, -p.partial)
+
+        results.sort(key=score, reverse=True)
+        return results[0], results
+
+    # ------------------------------------------------------------------ #
+    # exact search (Method 1): critical offsets instead of a uniform sweep
+    # ------------------------------------------------------------------ #
+    def _critical_offsets(self, angle: float = 0.0) -> Tuple[List[float], List[float]]:
+        """The offsets at which the complete-cell count can possibly change.
+
+        Sliding the grid only flips a cell between complete and partial when a
+        grid line touches a vertex of the usable region, so N_complete is a step
+        function whose jumps sit exactly at dx = xv (mod cw), dy = yv (mod ch)
+        for every vertex (xv, yv) of the usable region. That makes the set below
+        exhaustive, not a sample.
+
+        Unlike `_vertex_offsets`, this reads the vertices off `self.usable`
+        (which already has the obstacles punched out) and walks BOTH exterior
+        and interior rings of every polygon in it -- `usable` is a MultiPolygon
+        whenever an obstacle cuts the shape into disjoint pieces.
+
+        `angle` matters: `evaluate()` implements rotation by rotating the usable
+        region by -angle and then running an axis-aligned analysis, so the
+        critical offsets for a placement at `angle` are those of the ROTATED
+        geometry. Passing the un-rotated vertices would give offsets that have
+        nothing to do with the grid lines actually used.
+        """
+        work = rotate(self.usable, -angle, origin=self._pivot) if angle else self.usable
+
+        xs, ys = set(), set()
+        for ring in _iter_rings(work):
+            for x, y in ring.coords:
+                xs.add(_wrap(x, self.cw))
+                ys.add(_wrap(y, self.ch))
+        return sorted(xs), sorted(ys)
+
+    def optimize_exact(
+        self,
+        angles: Sequence[float] = (0.0,),
+        partial_penalty: float = 0.0,
+    ) -> Tuple[Placement, List[Placement]]:
+        """Exact translation search: evaluate one offset per constant-count face.
+
+        Same objective and same return contract as `optimize()`, but instead of
+        a resolution-dependent uniform sweep it enumerates the arrangement of
+        critical lines (see `_critical_offsets`) and tests one point inside each
+        face. Cost drops from O(steps^2) to O(Vx * Vy) evaluations per angle,
+        and no sharp optimum can be stepped over.
+
+        angles          : rotations to try, in degrees. Each angle gets its own
+                          critical set, computed from the geometry as that angle
+                          sees it.
+        partial_penalty : objective is  complete - partial_penalty * partial.
+
+        Returns (best_placement, all_placements_sorted_best_first).
+
+        Exactness note: the critical set is derived from region vertices, which
+        covers every event for axis-aligned edges. A slanted edge can also flip
+        a cell when a lattice CORNER grazes it, which is a diagonal event line
+        in (dx, dy) and is not a vertex offset. The guarantee is therefore exact
+        for rectilinear regions (and for any region viewed at an angle that
+        makes it rectilinear); elsewhere it remains a strong superset of the
+        alignment offsets an optimum needs.
+        """
+        angles = list(angles)
+        if not angles:
+            raise ValueError("angles must contain at least one angle")
+
+        results: List[Placement] = []
+        for angle in angles:
+            vx, vy = self._critical_offsets(angle)
+            dxs = _face_samples(vx, self.cw)
+            dys = _face_samples(vy, self.ch)
             for dx in dxs:
                 for dy in dys:
                     results.append(self.evaluate(dx, dy, angle))
