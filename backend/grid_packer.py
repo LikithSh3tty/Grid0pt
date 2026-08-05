@@ -29,7 +29,7 @@ Requires: shapely, matplotlib, numpy
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Iterator, List, Optional, Sequence, Tuple
 
@@ -125,6 +125,106 @@ _AREA_TOL_REL = 1e-12
 # `_classify_partial` precisely because it is a modelling choice the paper
 # should report a sensitivity study for, not a constant of the geometry.
 _SLIVER_FRACTION = 1e-3
+
+
+# --------------------------------------------------------------------------- #
+# rotation-vote modelling constants (design note section 8)
+# --------------------------------------------------------------------------- #
+# Every constant below is a MODELLING choice, not a property of the geometry.
+# Each is named, defaulted here and overridable per call, because the paper runs
+# an ablation over each one. The trade-off each controls is stated with it.
+
+#: The circle the fringe orientations are averaged on, in degrees.
+#:
+#: The note writes the multiplier as m = 360/P with P the ROTATION PERIOD of the
+#: placement (90 for square cells, 180 for rectangular). That conflates two
+#: different periodicities and is wrong for rectangular cells:
+#:
+#:   * The PLACEMENT period P is 90 or 180: turning a rectangular cell by 90
+#:     degrees swaps its width and height, so theta = 0 and theta = 90 are
+#:     genuinely different tilings and theta must range over [0, 180).
+#:   * ALIGNMENT, which is what the vote is actually about, always has period
+#:     90: a wall is flush with a grid line exactly when its orientation is
+#:     0 mod 90, whatever the cell's aspect ratio, because the grid has both
+#:     horizontal and vertical lines.
+#:
+#: Averaging on the placement circle with m = 2 makes the two perpendicular wall
+#: families of any rectangular room ANTIPODAL, so they cancel: measured on a
+#: 12x9 rectangle tilted 23 degrees with 3x2 cells, m = 2 gives R = 0.11 (below
+#: any sensible gate, so the method declines to rotate and keeps 10 complete
+#: cells) where m = 4 gives R = 1.00 and a candidate that reaches 18. The vote
+#: is therefore taken on the alignment circle always, and the placement period
+#: enters where it belongs -- in the RANGE of candidate angles, which is why
+#: `RotationVote` carries both numbers. For square cells the two agree exactly
+#: and this is the note's formula unchanged.
+#:
+#: `_dominant_orientations(vote_period=...)` overrides it, so the note's literal
+#: m = 360/P remains runnable as an ablation.
+_ALIGNMENT_PERIOD = 90.0
+
+#: Vote-confidence gate: below this resultant length the fringe has no dominant
+#: direction and the grid stays put.
+#:
+#: Trade-off. R is the weighted concentration of the fringe orientations on the
+#: alignment circle; it is 1 when every oblique chord points the same way and 0
+#: when they are spread uniformly. Too LOW a gate spends candidate solves on
+#: shapes with no wall to align to (a disc: measured R = 0.02-0.08); too HIGH a
+#: gate refuses to turn for a shape with a real but noisy dominant wall. 0.35
+#: sits an order of magnitude above the disc measurements and well below the
+#: R = 1.0 a clean tilted room produces, so both ends have wide margin. Note
+#: that the gate can only cost QUALITY, never correctness: `optimize_guided`
+#: compares every candidate against the un-rotated base and keeps the best.
+R_MIN = 0.35
+
+#: Width of the orientation bins the candidate list is clustered into, degrees.
+#:
+#: The note bins with `round(phi)`, i.e. 1-degree bins centred on the integers.
+#: Two things are made deliberate here. (i) The bins are cyclic and are offset
+#: by half a width so that a bin is CENTRED on 0 -- the alignment direction,
+#: where wall orientations pile up -- instead of split across a bin edge.
+#: (ii) The angle reported for a bin is the weighted circular MEAN of its
+#: members, not the bin's centre, so the bin width sets the clustering
+#: resolution and NOT the angular accuracy of the candidate: the headline
+#: instances recover 12 / 23 / 31 degrees exactly at any bin width.
+#:
+#: Trade-off. Narrower than the scatter of a real wall (a boundary decimated by
+#: Douglas-Peucker scatters its chord orientations by 1-2 degrees) fragments one
+#: wall into several candidates and wastes the candidate budget; wider than
+#: about 5 degrees merges genuinely distinct wall families -- at 5 degrees a
+#: 3-unit chord drifts 0.26 units transversely, a tenth of a cell, which is a
+#: real difference in the count. 2 degrees sits between the two.
+VOTE_BIN_DEG = 2.0
+
+#: How many orientation CLUSTERS become candidate angles (the note: "usually
+#: 1-4"). Each candidate costs one exact translation solve, so this is the
+#: quality/cost dial of the whole method. Clusters are ranked by accumulated
+#: vote weight, so the cap only ever drops the weakest walls. With rectangular
+#: cells each cluster yields two candidate angles (phi and phi+90, see
+#: `_ALIGNMENT_PERIOD`), so the emitted list can be up to twice this long.
+MAX_CANDIDATES = 4
+
+#: Half-width, in degrees, of the local refine window around each candidate.
+#: The note prescribes "+/- a few degrees". Wider windows drift toward being a
+#: scan again (the thing the method exists to remove); narrower ones cannot
+#: reach the compromise angle between two wall families that the refine is for.
+REFINE_HALF_WINDOW = 5.0
+
+#: Number of exact-translation solves the refine may spend inside that window.
+REFINE_PROBES = 8
+
+#: Which local refine to run: "none", "grid" or "golden".
+#:
+#: The note prescribes a golden-section search. Golden-section assumes a
+#: unimodal CONTINUOUS objective; N_complete(theta) is integer-valued and
+#: piecewise-constant, so on a plateau -- which is most of any window -- the
+#: bracket contracts on a comparison between two equal values and the search
+#: converges to an arbitrary interior point rather than to a maximum. Measured
+#: over the instances in `tests/test_guided_rotation.py` at an equal probe
+#: budget, golden-section never beat the un-refined candidate, and never beat
+#: plain uniform sampling of the same window. The default is therefore "grid",
+#: which is what the evidence supports; "golden" is kept runnable so the paper's
+#: ablation can report the comparison rather than assert it.
+REFINE_METHOD = "grid"
 
 
 class PartialClass(str, Enum):
@@ -260,6 +360,91 @@ class PartialClassification:
                 f"interior_vertices={self.interior_vertex_count})")
 
 
+@dataclass(frozen=True)
+class OrientationCandidate:
+    """One dominant wall direction the fringe voted for.
+
+    angle     : the ABSOLUTE grid angle to try, in [0, period). This is the base
+                placement's own angle plus the cluster's orientation, not the
+                orientation itself -- chord angles are measured against the grid
+                (see `Chord`), so at a base angle theta a chord reading phi
+                belongs to a wall whose absolute orientation is theta + phi.
+    weight     : accumulated vote weight of the cluster, sum of L * g(f).
+    residual   : signed turn from the base angle onto this candidate, reduced
+                 into (-vote_period/2, +vote_period/2]. Positive is
+                 counter-clockwise, negative clockwise (design note section 8.2);
+                 |residual| is the exact angle that makes this wall family
+                 parallel to a grid axis.
+    resultant  : the cluster's OWN concentration in [0, 1] -- how tightly its
+                 members agree. A cluster of one chord has resultant 1.
+    chord_count: how many oblique chords voted for it.
+    """
+
+    angle: float
+    weight: float
+    residual: float
+    resultant: float
+    chord_count: int
+
+
+@dataclass(frozen=True)
+class RotationVote:
+    """The rotation read-off from one classified placement (design note 8.1).
+
+    base_angle   : the grid angle of the placement the vote was taken from. All
+                   chord orientations are relative to it.
+    period       : the PLACEMENT period, 90 for square cells and 180 for
+                   rectangular ones. Candidate angles live in [0, period).
+    vote_period  : the circle the circular mean was taken on. See
+                   `_ALIGNMENT_PERIOD` for why this is 90 regardless of `period`
+                   by default, and how to run the note's literal m = 360/period.
+    multiplier   : m = 360 / vote_period, the note's symmetry multiplier.
+    phi_star     : the dominant chord orientation RELATIVE to `base_angle`, in
+                   [0, vote_period).
+    angle        : phi_star as an absolute grid angle, (base_angle + phi_star)
+                   mod period -- the note's "the angle the walls want the grid
+                   to match".
+    delta        : signed residual onto `angle`, in (-vote_period/2,
+                   vote_period/2]. The turn direction and magnitude of 8.2.
+    resultant    : R = |sum w e^(i m phi)| / sum w, in [0, 1]. The built-in
+                   should-we-rotate confidence. 0 when nothing voted.
+    total_weight : sum of w = L * g(f) over every oblique chord.
+    chord_count  : how many oblique chords voted.
+    candidates   : the distinct dominant orientations, ranked by weight.
+    evaluations  : placements evaluated by the guided search that produced this
+                   vote. 0 when `_dominant_orientations` was called directly --
+                   the vote itself evaluates nothing.
+    """
+
+    base_angle: float
+    period: float
+    vote_period: float
+    multiplier: float
+    phi_star: float
+    angle: float
+    delta: float
+    resultant: float
+    total_weight: float
+    chord_count: int
+    candidates: Tuple[OrientationCandidate, ...] = ()
+    evaluations: int = 0
+
+    @property
+    def candidate_angles(self) -> Tuple[float, ...]:
+        """Just the absolute angles, in rank order -- what the search sweeps."""
+        return tuple(c.angle for c in self.candidates)
+
+    def confident(self, r_min: float = R_MIN) -> bool:
+        """True when the fringe has a dominant direction worth turning for."""
+        return self.chord_count > 0 and self.resultant >= r_min
+
+    def __repr__(self) -> str:                     # pragma: no cover - display
+        return (f"RotationVote(phi*={self.phi_star:.2f}deg, "
+                f"angle={self.angle:.2f}deg, delta={self.delta:+.2f}deg, "
+                f"R={self.resultant:.3f}, chords={self.chord_count}, "
+                f"candidates={[round(a, 2) for a in self.candidate_angles]})")
+
+
 @dataclass
 class Placement:
     """Result of evaluating one grid placement (offset + angle)."""
@@ -277,6 +462,11 @@ class Placement:
     #: `evaluate` is the hot primitive inside the search sweeps and must not
     #: pay for it. `classified` says which of the two states this is in.
     partial_classes: List["PartialClassification"] = field(default_factory=list)
+    #: The rotation read-off that produced this placement, when it came out of
+    #: `optimize_guided`. None for a placement that was merely evaluated. Step 4
+    #: surfaces phi*, R and the candidate weights from here into the API stats,
+    #: and the paper's figures read the same object.
+    rotation_vote: Optional["RotationVote"] = None
 
     @property
     def classified(self) -> bool:
@@ -335,6 +525,102 @@ def _wrap(value: float, period: float) -> float:
     """
     v = round(value % period, _COORD_DECIMALS)
     return 0.0 if v >= period else v
+
+
+def _objective(placement: "Placement", partial_penalty: float = 0.0):
+    """The optimization objective of design note section 1, as a sort key.
+
+    maximize N_complete - partial_penalty * N_partial, ties broken by fewer
+    partials. Defined once at module level rather than as a closure inside each
+    search so that `optimize`, `optimize_exact` and `optimize_guided` provably
+    rank on the SAME objective -- which is what makes "guided is never worse
+    than its own base" and "guided beats the fixed-angle scan" comparable
+    claims rather than two different scoreboards.
+    """
+    return (placement.complete - partial_penalty * placement.partial,
+            -placement.partial)
+
+
+def _wrap_signed(value: float, period: float) -> float:
+    """Reduce `value` into the half-open window (-period/2, +period/2].
+
+    This is the note's `wrap` of section 8.2: the signed residual whose sign is
+    the turn direction (positive = counter-clockwise) and whose magnitude is the
+    turn. Taking the window half-open at -period/2 and closed at +period/2 makes
+    the map single-valued at the antipode, where the two turns are equal and
+    opposite and the choice is arbitrary; picking the positive one keeps the
+    result a deterministic function of the input.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    v = value % period
+    return v - period if v > period / 2.0 else v
+
+
+def _circular_mean(items: Sequence[Tuple[float, float]], multiplier: float):
+    """Weighted circular mean of orientations on the symmetry circle.
+
+    items      : (orientation in degrees, weight) pairs.
+    multiplier : m of design note section 8.1. Orientations are mapped to the
+                 circle by phi -> m*phi before averaging, which is what makes
+                 directions that the grid cannot tell apart average together
+                 instead of cancelling.
+
+    Returns (mean orientation in degrees, resultant length R in [0, 1], total
+    weight). With no items, or with total weight 0, returns (0, 0, 0) rather
+    than dividing by zero -- a fringe with nothing in it has no direction and
+    zero confidence, which is exactly what the R gate should then see.
+    """
+    c = s = total = 0.0
+    for phi, w in items:
+        radians = math.radians(multiplier * phi)
+        c += w * math.cos(radians)
+        s += w * math.sin(radians)
+        total += w
+    if total <= 0.0:
+        return 0.0, 0.0, 0.0
+    return (math.degrees(math.atan2(s, c)) / multiplier,
+            math.hypot(c, s) / total,
+            total)
+
+
+def _orientation_bins(items: Sequence[Tuple[float, float]], period: float,
+                      bin_deg: float):
+    """Group (orientation, weight) pairs into cyclic bins of width `bin_deg`.
+
+    Replaces the note's `votes[round(phi)]`. Two deliberate changes, both
+    documented on `VOTE_BIN_DEG`: the bins are CYCLIC on [0, period) so a wall
+    that scatters across the wrap point stays one wall, and they are offset by
+    half a width so that a bin is CENTRED on 0 -- `round` already does this for
+    width 1, and it matters because 0 (mod the alignment period) is the
+    direction wall orientations pile up on.
+
+    The bin count is rounded to an integer so the bins tile the circle exactly;
+    the effective width is therefore period / round(period / bin_deg), which
+    can differ slightly from the requested one.
+
+    Yields (mean orientation, weight, resultant, count) per non-empty bin,
+    ranked by weight. The orientation is the bin's weighted circular mean, not
+    its centre.
+    """
+    if bin_deg <= 0:
+        raise ValueError("bin_deg must be positive")
+    n_bins = max(1, int(round(period / bin_deg)))
+    width = period / n_bins
+    multiplier = 360.0 / period
+
+    buckets = {}
+    for phi, w in items:
+        index = int(math.floor((phi + width / 2.0) / width)) % n_bins
+        buckets.setdefault(index, []).append((phi, w))
+
+    clusters = []
+    for index, members in buckets.items():
+        mean, resultant, weight = _circular_mean(members, multiplier)
+        clusters.append((mean % period, weight, resultant, len(members)))
+    # Rank by weight; ties broken by orientation so the list is deterministic.
+    clusters.sort(key=lambda c: (-c[1], c[0]))
+    return clusters
 
 
 def _grow(geom, tol: float = _GEOM_TOL):
@@ -1013,11 +1299,7 @@ class GridPacker:
                 for dy in dys:
                     results.append(self.evaluate(dx, dy, angle))
 
-        def score(p: Placement):
-            # higher complete is better; fewer partials breaks ties
-            return (p.complete - partial_penalty * p.partial, -p.partial)
-
-        results.sort(key=score, reverse=True)
+        results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
 
     # ------------------------------------------------------------------ #
@@ -1093,12 +1375,282 @@ class GridPacker:
                 for dy in dys:
                     results.append(self.evaluate(dx, dy, angle))
 
-        def score(p: Placement):
-            # higher complete is better; fewer partials breaks ties
-            return (p.complete - partial_penalty * p.partial, -p.partial)
-
-        results.sort(key=score, reverse=True)
+        results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
+
+    # ------------------------------------------------------------------ #
+    # Method 2: rotation read off the partial-cell pattern (design note 8)
+    # ------------------------------------------------------------------ #
+    @property
+    def rotation_period(self) -> float:
+        """The period of the placement's angle: 90 for square cells, 180 else.
+
+        Turning a SQUARE cell by 90 degrees maps the grid onto itself, so only
+        [0, 90) is distinct. Turning a rectangular cell by 90 degrees swaps its
+        width and height, which is a different tiling, so its angle ranges over
+        [0, 180). This is the note's P. It is NOT the circle the orientation
+        vote averages on -- see `_ALIGNMENT_PERIOD`.
+        """
+        return 90.0 if self.cw == self.ch else 180.0
+
+    def _dominant_orientations(
+        self,
+        placement: Placement,
+        *,
+        vote_period: Optional[float] = None,
+        bin_deg: float = VOTE_BIN_DEG,
+        max_candidates: int = MAX_CANDIDATES,
+        weight_power: float = 1.0,
+        include_irreducible: bool = True,
+    ) -> RotationVote:
+        """The rotation vote: let the oblique fringe pick the angle (note 8.1).
+
+        Every oblique chord of every partial cell casts a vote for its own
+        orientation phi, weighted w = L * g(f) with L the chord length and
+        g(f) = f**weight_power the inside fraction of the cell it came from.
+        g up-weights near-complete B1 cells (much to reclaim) and starves
+        hopeless B3 triangles and F slivers (nothing to reclaim). The votes are
+        averaged on the symmetry circle, giving the dominant orientation phi*
+        and a concentration R that says whether turning is worth it at all.
+
+        placement must have been evaluated with `classify=True`; the vote reads
+        `partial_classes`, and a placement whose partials were never classified
+        would silently vote with an empty fringe.
+
+        WHICH CHORDS VOTE. Every oblique chord, whatever class its cell was
+        labelled. The note's pseudocode comments "B-class chords only", but its
+        own section 7.1 puts "oblique cut (B1-B3, oblique C2/D)" in the rotation
+        bucket -- the lever is dispatched by the CUT's orientation, not by the
+        cell's label, and a reflex corner or an obstacle bite with a slanted
+        edge wants the same turn a B2 trapezoid does. `oblique_chords` is
+        exactly that set. The label-blind reading is also the one that degrades
+        gracefully: on a tilted room most cells classify as B2 but the corner
+        cells come out C1/C2, and dropping their chords would bias phi* toward
+        whichever wall happened to avoid the corners.
+
+        `include_irreducible=False` drops chords from regime-X cells (E, F) as
+        an ablation. It is off by default because the weight already handles
+        them: an F sliver has f ~ 0 by definition, so w ~ 0, and it cannot move
+        the mean whether it is present or not.
+
+        vote_period : the symmetry circle, default `_ALIGNMENT_PERIOD` (90).
+                      Pass `self.rotation_period` to reproduce the note's
+                      literal m = 360/P.
+        bin_deg     : orientation clustering resolution, see `VOTE_BIN_DEG`.
+        max_candidates : how many CLUSTERS become candidates, see
+                      `MAX_CANDIDATES`. With rectangular cells each cluster
+                      emits two angles, phi and phi + 90.
+        """
+        if not placement.classified:
+            raise ValueError(
+                "the rotation vote needs the partial-cell taxonomy: evaluate "
+                "the placement with classify=True before voting")
+
+        period = self.rotation_period
+        vote_period = _ALIGNMENT_PERIOD if vote_period is None else float(vote_period)
+        if vote_period <= 0:
+            raise ValueError("vote_period must be positive")
+        multiplier = 360.0 / vote_period
+        base_angle = placement.angle
+
+        votes: List[Tuple[float, float]] = []
+        for classification in placement.partial_classes:
+            if not include_irreducible and not classification.recoverable:
+                continue
+            for chord in classification.oblique_chords:
+                weight = chord.length * (chord.inside_fraction ** weight_power)
+                if weight > 0.0:
+                    votes.append((chord.angle_deg % vote_period, weight))
+
+        phi_star, resultant, total_weight = _circular_mean(votes, multiplier)
+        phi_star %= vote_period
+
+        # A cluster's orientation is relative to the GRID, so the grid angle
+        # that aligns it is the base angle plus the orientation. The note takes
+        # phi* to be the absolute angle, which is only true because its caller
+        # happens to vote from theta = 0.
+        def to_angle(orientation: float) -> float:
+            return (base_angle + orientation) % period
+
+        candidates: List[OrientationCandidate] = []
+        if votes:
+            # One cluster can name several distinct PLACEMENTS when the vote
+            # circle is finer than the placement period: with rectangular cells
+            # a wall at phi is flush with the grid both at grid angle phi (the
+            # wall runs along the cell width) and at phi + 90 (along the
+            # height), and those are different tilings that must both be tried.
+            repeats = max(1, int(round(period / vote_period)))
+            for mean, weight, spread, count in _orientation_bins(
+                    votes, vote_period, bin_deg)[:max(0, max_candidates)]:
+                for k in range(repeats):
+                    orientation = mean + k * vote_period
+                    candidates.append(OrientationCandidate(
+                        angle=to_angle(orientation),
+                        weight=weight,
+                        residual=_wrap_signed(orientation, vote_period),
+                        resultant=spread,
+                        chord_count=count,
+                    ))
+
+        return RotationVote(
+            base_angle=base_angle,
+            period=period,
+            vote_period=vote_period,
+            multiplier=multiplier,
+            phi_star=phi_star,
+            angle=to_angle(phi_star),
+            delta=_wrap_signed(phi_star, vote_period),
+            resultant=resultant,
+            total_weight=total_weight,
+            chord_count=len(votes),
+            candidates=tuple(candidates),
+        )
+
+    def optimize_guided(
+        self,
+        *,
+        partial_penalty: float = 0.0,
+        r_min: float = R_MIN,
+        refine: str = REFINE_METHOD,
+        refine_half_window: float = REFINE_HALF_WINDOW,
+        refine_probes: int = REFINE_PROBES,
+        max_candidates: int = MAX_CANDIDATES,
+        bin_deg: float = VOTE_BIN_DEG,
+        vote_period: Optional[float] = None,
+        weight_power: float = 1.0,
+    ) -> Tuple[Placement, List[Placement]]:
+        """Align-then-solve-exactly (design note section 8.4).
+
+        Solve translation exactly at theta = 0, classify that placement, let its
+        oblique fringe vote for the angle, and solve translation exactly again
+        at each angle the vote named. No angle scan happens anywhere.
+
+        NEVER WORSE THAN THE BASE, BY CONSTRUCTION. The un-rotated base is kept
+        in the result pool and the winner is the argmax over the pool under
+        `_objective` -- the same objective every other search here ranks on. A
+        vote that misfires therefore costs evaluations and nothing else. Exact
+        ties go to the smallest turn, so a candidate has to be strictly better
+        to move the grid.
+
+        Returns (best_placement, all_placements_sorted_best_first), matching
+        `optimize` and `optimize_exact`. The vote is attached to the returned
+        placement as `.rotation_vote`, carrying phi*, R, the candidates with
+        their weights, and the evaluation count.
+
+        r_min          : vote-confidence gate, see `R_MIN`. Below it the fringe
+                         has no dominant direction and the base is returned
+                         unrotated, without spending a candidate solve.
+        refine         : local refine, see `REFINE_METHOD` -- "grid" (default),
+                         "golden" (the note's prescription) or "none".
+        refine_probes  : solves the refine may spend; shared budget, whichever
+                         method is chosen, so the two are comparable.
+        """
+        if refine not in ("none", "grid", "golden"):
+            raise ValueError(f"unknown refine method: {refine!r}")
+
+        base_best, results = self.optimize_exact(
+            angles=(0.0,), partial_penalty=partial_penalty)
+        # Re-evaluate the winning offset WITH the taxonomy. Classification is
+        # opt-in precisely so the sweep above does not pay for it, so the one
+        # placement the vote reads is classified here, on its own.
+        base = self.evaluate(base_best.dx, base_best.dy, 0.0, classify=True)
+        results = [base] + list(results[1:])
+        evaluations = len(results) + 1          # + the classifying re-evaluate
+
+        vote = self._dominant_orientations(
+            base,
+            vote_period=vote_period,
+            bin_deg=bin_deg,
+            max_candidates=max_candidates,
+            weight_power=weight_power,
+        )
+
+        def attach(best: Placement) -> Tuple[Placement, List[Placement]]:
+            best.rotation_vote = replace(vote, evaluations=evaluations)
+            return best, results
+
+        if not vote.confident(r_min):
+            # No dominant wall -> nothing to align to. Note section 8.1.
+            results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
+            return attach(base)
+
+        def solve(angle: float) -> Placement:
+            nonlocal evaluations
+            best, batch = self.optimize_exact(
+                angles=(angle,), partial_penalty=partial_penalty)
+            results.extend(batch)
+            evaluations += len(batch)
+            return best
+
+        for angle in vote.candidate_angles:
+            solve(angle)
+
+        if refine != "none" and refine_probes > 0 and refine_half_window > 0:
+            # Refine around the best angle found so far rather than around each
+            # candidate. The note says "each candidate"; refining only the
+            # argmax costs 1/k as many solves and, on every instance measured,
+            # reached the same count -- and the refine turns out not to earn its
+            # place at all (see `REFINE_METHOD`), so spending k times more on it
+            # would be worse than pointless.
+            centre = max(results, key=lambda p: _objective(p, partial_penalty)).angle
+            if refine == "golden":
+                self._golden_refine(centre, refine_half_window, refine_probes,
+                                    solve, partial_penalty)
+            else:
+                self._grid_refine(centre, refine_half_window, refine_probes, solve)
+
+        # Rank on the objective; break exact ties toward the SMALLEST turn from
+        # the base, so the grid only moves when moving is strictly better and a
+        # tie leaves the un-rotated placement in front.
+        results.sort(
+            key=lambda p: (_objective(p, partial_penalty),
+                           -abs(_wrap_signed(p.angle - base.angle, vote.period))),
+            reverse=True)
+        return attach(results[0])
+
+    @staticmethod
+    def _grid_refine(centre: float, half_window: float, probes: int, solve):
+        """Uniformly sample the +/- window around `centre`.
+
+        `probes` angles at the centres of `probes` equal sub-intervals, so none
+        of them repeats `centre` (already solved) and the set is symmetric about
+        it. Unlike golden-section this makes no unimodality assumption, which
+        matters because N_complete(theta) is a piecewise-constant step function:
+        a plateau tells a bracketing search nothing, but sampling still sees
+        every plateau wide enough to be worth landing on.
+        """
+        step = 2.0 * half_window / probes
+        for i in range(probes):
+            solve(centre - half_window + (i + 0.5) * step)
+
+    @staticmethod
+    def _golden_refine(centre: float, half_window: float, probes: int, solve,
+                       partial_penalty: float):
+        """Golden-section search of the +/- window (the note's prescription).
+
+        KEPT FOR THE ABLATION, NOT BECAUSE IT WORKS. Golden-section contracts a
+        bracket by comparing two interior probes, which requires the objective
+        to be unimodal and to actually vary between them. N_complete(theta) is
+        integer-valued and piecewise-constant, so most comparisons inside a few
+        degrees are between two EQUAL values; the tie is broken by the code's
+        arbitrary convention and the bracket contracts on no information,
+        converging to an arbitrary interior point. See `REFINE_METHOD` for what
+        that measures out as.
+        """
+        ratio = (math.sqrt(5.0) - 1.0) / 2.0
+        lo, hi = centre - half_window, centre + half_window
+        a, b = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
+        fa = _objective(solve(a), partial_penalty)
+        fb = _objective(solve(b), partial_penalty)
+        for _ in range(max(0, probes - 2)):
+            if fa < fb:
+                lo, a, fa = a, b, fb
+                b = lo + ratio * (hi - lo)
+                fb = _objective(solve(b), partial_penalty)
+            else:
+                hi, b, fb = b, a, fa
+                a = hi - ratio * (hi - lo)
+                fa = _objective(solve(a), partial_penalty)
 
     # ------------------------------------------------------------------ #
     # visualization
