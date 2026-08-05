@@ -14,7 +14,9 @@ Definitions
 - complete   : a grid cell lying ENTIRELY inside the usable region.
 - partial    : a grid cell that overlaps the usable region but pokes outside it
                (crosses the boundary) or clips an obstacle.
-- outside    : a cell with no usable area at all -> ignored.
+- outside    : a cell with no usable AREA at all -> ignored. A cell that merely
+               touches the region along a line or a point has zero area in
+               common with it and is outside, not partial.
 
 The grid can slide in every direction (the "up / down / left / right / center"
 shift) and optionally rotate, because moving the grid by a fraction of a cell
@@ -31,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+import shapely
 from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
@@ -59,6 +62,38 @@ from shapely.prepared import prep
 # use, so it can never absorb a geometrically real overlap.
 _COORD_DECIMALS = 9
 _GEOM_TOL = 10.0 ** -(_COORD_DECIMALS - 1)      # 1e-8 vs 5e-10 of rounding
+
+
+# --------------------------------------------------------------------------- #
+# area resolution -- the OTHER half of the classification, and a DIFFERENT
+# quantity from the two above
+# --------------------------------------------------------------------------- #
+# The three classes are defined by area: a cell C is complete when C is a subset
+# of U, partial when 0 < area(C n U) < area(C), and outside when
+# area(C n U) = 0. `_GEOM_TOL` above is a LENGTH slack on the complete/partial
+# side; it is deliberately coarse (1e-8) because it has to absorb `_wrap`'s
+# rounding of the offsets. This constant is the partial/outside side, and it
+# must NOT be derived from `_GEOM_TOL`: nothing rounds an area, so the only
+# thing to discount here is floating-point noise, which sits ~1e-15.
+#
+# `_generate_cells` tiles `region.bounds`, and the rotate-by-(-angle) round trip
+# leaves a bound such as maxx = 12.000000000000002. The extra row/column that
+# emits therefore overlaps the region in a sliver one coordinate-ulp wide
+# (~eps * L, for a region of extent L) running along a cell edge (length c), so
+# its inside-fraction is ~eps * L / c -- 9e-16 for the 12x9-at-3x3 instance,
+# where `intersects()` is nevertheless True. Being a FRACTION of the cell area
+# rather than an absolute area, the bound below is scale-free: it holds at any
+# cell size, and its headroom is spent on the grid's aspect L/c, tolerating
+# L/c up to ~1e-12 / eps ~= 4.5e3 cells across (2e7 cells) before the noise
+# floor could reach it.
+#
+# It must stay FAR below any real inside-fraction: the taxonomy's class F
+# ("grazing sliver", f ~ 0, the boundary just clips a corner) is a genuine
+# partial and has to keep being counted. 1e-12 sits ~1000x above the noise it
+# removes and ~1e6x below the smallest fraction any test calls real, so it can
+# only ever delete a numerically-zero overlap. Widening it toward a
+# "drop small partials" cutoff would silently destroy class F.
+_AREA_TOL_REL = 1e-12
 
 
 @dataclass
@@ -255,27 +290,50 @@ class GridPacker:
         Containment is tested against the usable region grown by `_GEOM_TOL`
         (see the constant): the offsets fed in here were rounded to that same
         resolution, so a cell may miss a wall it is meant to be flush with by a
-        few ulp. `intersects` stays on the UN-grown region, so the
-        partial/outside split is unaffected by the tolerance. Both prepared
-        geometries are built once per call -- `evaluate` is the hot primitive,
-        and this must not become per-cell work.
+        few ulp. The complete/partial split is the only thing that tolerance
+        touches; the partial/outside split below runs on the UN-grown region.
+        Both prepared geometries are built once per call -- `evaluate` is the
+        hot primitive, and this must not become per-cell work.
+
+        The partial/outside split is by AREA, per the definition: partial is
+        0 < area(C n U) < area(C), outside is area(C n U) = 0. `intersects` is
+        only the cheap necessary condition -- it is also true for a measure-zero
+        touch along a line, which is exactly what the cells `_generate_cells`
+        emits past a rounded-up bound do (see `_AREA_TOL_REL`). The intersection
+        is computed ONLY for cells that already failed `contains` and passed
+        `intersects`, i.e. the boundary fringe, O(perimeter / cell size) cells
+        and not all N; the complete-cell path stays a single prepared predicate.
+        Cost is therefore O(N) predicates + O(perimeter / cell size) overlays,
+        and the second term vanishes against the first as the grid refines.
         """
         if angle:
             work = rotate(self.usable, -angle, origin=self._pivot)
         else:
             work = self.usable
 
-        prepared = prep(work)               # exact: partial vs outside
+        prepared = prep(work)               # exact: fringe candidate filter
         tolerant = prep(_grow(work))        # tol-forgiving: complete vs partial
         cells = self._generate_cells(work, dx, dy)
 
-        complete, partial = [], []
+        # Pass 1, over all N cells: prepared predicates only. `intersects` is
+        # the cheap NECESSARY condition for partial, not the definition, so what
+        # it selects is the boundary fringe -- the candidates.
+        complete, fringe = [], []
         for c in cells:
             if tolerant.contains(c):        # wholly inside usable -> complete
                 complete.append(c)
-            elif prepared.intersects(c):    # straddles boundary/obstacle -> partial
-                partial.append(c)
-            # else: no usable area -> ignore
+            elif prepared.intersects(c):    # meets the region somehow -> decide
+                fringe.append(c)
+            # else: provably disjoint -> outside, ignore
+
+        # Pass 2, over the fringe only (O(perimeter / cell size) cells): apply
+        # the definition, partial <=> 0 < area(C n U). This is what separates a
+        # cell that straddles the boundary from one that merely touches it along
+        # a line -- `intersects` says True to both. One batched GEOS overlay
+        # rather than a Python-level round trip per cell.
+        min_overlap = _AREA_TOL_REL * self.cw * self.ch
+        overlaps = shapely.area(shapely.intersection(work, fringe)) if fringe else ()
+        partial = [c for c, a in zip(fringe, overlaps) if a > min_overlap]
 
         if angle:  # rotate cells back into the original frame for display
             complete = [rotate(c, angle, origin=self._pivot) for c in complete]
