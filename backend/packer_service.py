@@ -34,29 +34,85 @@ def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
     the search space is [0, 180). Only when cells are SQUARE does 90 deg also
     reproduce it -- for rectangular cells a quarter turn swaps cw and ch, which
     is a genuinely different packing and can be the better one.
+
+    RETAINED AS THE BASELINE, not used to serve requests. This fixed ladder plus
+    the uniform offset sweep is what the packer used to do, and the paper's
+    ablation measures the new solver against it, so it has to stay runnable and
+    unchanged. `_solve` is what requests go through.
     """
     period = 90 if cell_width == cell_height else 180
     return tuple(range(0, period, ROTATE_STEP))
+
+
+def _solve(packer: GridPacker, rotate: bool):
+    """Place the grid, and read back what the placement certifies.
+
+    Translation is solved exactly either way -- the critical-offset arrangement
+    replaces the uniform sweep, so there is no `steps` resolution to pick and no
+    sharp optimum to step over. With `rotate` the angle comes from the
+    partial-cell fringe's own orientation vote rather than a fixed 15 degree
+    ladder.
+
+    Returns (best, certificate). The best placement is re-evaluated once with
+    the taxonomy on so the certificate and the vote diagnostics can be read off
+    it; the search itself never pays for classification.
+    """
+    if rotate:
+        best, _ = packer.optimize_guided()
+    else:
+        best, _ = packer.optimize_exact()
+
+    classified = packer.evaluate(best.dx, best.dy, best.angle, classify=True)
+    classified.rotation_vote = best.rotation_vote
+    return classified, packer.certificate(classified)
 
 
 def _polygon_coords(poly: Polygon) -> List[Point]:
     return [(float(x), float(y)) for x, y in poly.exterior.coords[:-1]]
 
 
-def _placement_to_result(packer: GridPacker, best) -> dict:
+def _placement_to_result(packer: GridPacker, best, certificate=None) -> dict:
+    """Serialise a placement for the API.
+
+    The response SHAPE is unchanged -- same keys, same geometry -- and the new
+    diagnostics are additive fields inside `stats`, so existing clients keep
+    working while the paper's figures read the certificate straight off the
+    endpoint.
+    """
+    stats = {
+        "complete": best.complete,
+        "partial": best.partial,
+        "coverage": best.coverage,
+        "dx": best.dx,
+        "dy": best.dy,
+        "angle": best.angle,
+    }
+
+    vote = best.rotation_vote
+    if vote is not None:
+        # How confident the fringe was about the angle, and what it cost. R
+        # below the gate means the grid deliberately stayed put.
+        stats["resultant"] = vote.resultant
+        stats["rotated"] = vote.confident()
+        stats["evaluations"] = vote.evaluations
+
+    if certificate is not None:
+        # How far from optimal this result could possibly be. `optimality_gap`
+        # of 0 means no placement of this grid on this region has fewer
+        # partials; `certified` False means the floor's assumption did not hold
+        # on this instance and the gap should not be quoted.
+        stats["irreducible"] = certificate.irreducible
+        stats["partial_floor"] = certificate.floor
+        stats["optimality_gap"] = certificate.gap
+        stats["certified"] = certificate.certified
+        stats["recoverable_area"] = certificate.recoverable_area
+
     return {
         "shape": _polygon_coords(packer.shape),
         "obstacles": [_polygon_coords(o) for o in packer.obstacles],
         "complete_cells": [_polygon_coords(c) for c in best.complete_cells],
         "partial_cells": [_polygon_coords(c) for c in best.partial_cells],
-        "stats": {
-            "complete": best.complete,
-            "partial": best.partial,
-            "coverage": best.coverage,
-            "dx": best.dx,
-            "dy": best.dy,
-            "angle": best.angle,
-        },
+        "stats": stats,
     }
 
 
@@ -86,9 +142,8 @@ def run_packing(
     obstacles = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
 
     packer = GridPacker(shape, obstacles, cell_width=cell_width, cell_height=cell_height)
-    angles = _rotate_angles(cell_width, cell_height) if rotate else (0.0,)
-    best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
-    return _placement_to_result(packer, best)
+    best, certificate = _solve(packer, rotate)
+    return _placement_to_result(packer, best, certificate)
 
 
 def run_packing_from_image(
@@ -107,6 +162,5 @@ def run_packing_from_image(
         raise ValueError("could not read image: unsupported or corrupt file")
 
     packer = GridPacker.from_image(img, cell_width=cell_width, cell_height=cell_height)
-    angles = _rotate_angles(cell_width, cell_height) if rotate else (0.0,)
-    best, _ = packer.optimize(steps=DEFAULT_STEPS, angles=angles)
-    return _placement_to_result(packer, best)
+    best, certificate = _solve(packer, rotate)
+    return _placement_to_result(packer, best, certificate)
