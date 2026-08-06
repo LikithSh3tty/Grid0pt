@@ -1021,6 +1021,14 @@ class GridPacker:
         # pivot used for any rotation so results are reproducible
         self._pivot = self.shape.centroid
 
+        #: How many times `evaluate` has run on this packer. `evaluate` is the
+        #: unit of work every search here is built from, so counting it is the
+        #: one cost metric that compares a uniform sweep, an exact solve and a
+        #: guided solve on equal terms -- section 11's "evaluations" column,
+        #: measured rather than inferred from a loop's bounds. Free to keep, and
+        #: callers may zero it between runs.
+        self.evaluations = 0
+
     @classmethod
     def from_image(
         cls,
@@ -1110,6 +1118,8 @@ class GridPacker:
         When it is on, the classes land in `Placement.partial_classes`,
         index-aligned with `partial_cells`.
         """
+        self.evaluations += 1
+
         if angle:
             work = rotate(self.usable, -angle, origin=self._pivot)
         else:

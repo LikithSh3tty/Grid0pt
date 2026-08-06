@@ -28,16 +28,11 @@ def off_grid_obstacle() -> Polygon:
     return Polygon([(7, 1), (10.5, 1), (10.5, 2.5), (7, 2.5)])
 
 
-class CountingPacker(GridPacker):
-    """GridPacker that records how many placements were evaluated."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.evaluations = 0
-
-    def evaluate(self, dx=0.0, dy=0.0, angle=0.0):
-        self.evaluations += 1
-        return super().evaluate(dx, dy, angle)
+# Cost is read off `GridPacker.evaluations`, the packer's own counter. This file
+# used to wrap the packer in a subclass to count for itself; the counter now
+# lives on the packer because the evaluation harness needs the same number for
+# methods whose cost is not a product of loop bounds, and two counters would be
+# two chances to be wrong about the paper's cost column.
 
 
 # Offsets per axis in the ground-truth uniform sweep. The narrowest
@@ -72,10 +67,10 @@ def test_exact_matches_dense_sweep_on_l_shape_with_obstacle():
     """
     shape, obstacle = l_shape(), off_grid_obstacle()
 
-    exact_packer = CountingPacker(shape, [obstacle], cell_width=3, cell_height=3)
+    exact_packer = GridPacker(shape, [obstacle], cell_width=3, cell_height=3)
     best, results = exact_packer.optimize_exact()
 
-    dense_packer = CountingPacker(shape, [obstacle], cell_width=3, cell_height=3)
+    dense_packer = GridPacker(shape, [obstacle], cell_width=3, cell_height=3)
     dense_best = dense_sweep_best(dense_packer, steps=DENSE_STEPS)
 
     # the optimum itself: identical

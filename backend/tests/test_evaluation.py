@@ -1,0 +1,291 @@
+"""Tests for the evaluation harness (design note section 11).
+
+A harness that measures a method is only worth as much as its own correctness:
+a wrong cost counter or a corpus whose "known optimum" is not actually optimal
+would produce a table that looks authoritative and says nothing. So the pieces
+that the results table rests on are tested directly:
+
+  * the cost metric -- `GridPacker.evaluations` counts the primitive every
+    search is built from, so it must count every call and only real calls;
+  * the known answers -- the corpus claims a proven optimum for the exact-tiling
+    families. That claim is checked by attaining it, including on the tilted
+    rooms, where attaining it requires finding the rotation;
+  * reproducibility -- section 11 promises a released corpus. The corpus is its
+    generator, so the generator must be deterministic;
+  * the driver -- one row per (instance, method), with the fields the tables
+    read, measured rather than assumed.
+
+The corpus used here is deliberately tiny and local. Running the real one is the
+harness's job, not the test suite's.
+"""
+import math
+
+import pytest
+
+from shapely.affinity import rotate as shp_rotate
+from shapely.geometry import Polygon
+
+from evaluation import corpus as corpus_module
+from evaluation import methods as methods_module
+from evaluation import run as run_module
+from evaluation.corpus import Instance, l_shape, random_rectilinear, rectangle
+from grid_packer import GridPacker
+
+
+# --------------------------------------------------------------------------- #
+# the cost metric
+# --------------------------------------------------------------------------- #
+
+def test_the_evaluation_counter_counts_evaluations():
+    """One increment per `evaluate`, starting at zero, including the classifying
+    read-backs -- the counter is the paper's cost column, so it may not quietly
+    exclude work the method actually did."""
+    packer = GridPacker(rectangle(12, 9), [], cell_width=3, cell_height=3)
+
+    assert packer.evaluations == 0
+    packer.evaluate(0.0, 0.0)
+    packer.evaluate(1.0, 1.0, classify=True)
+    assert packer.evaluations == 2
+
+
+def test_the_counter_matches_the_number_of_placements_a_sweep_returns():
+    """A sweep returns one placement per evaluation, so the two must agree.
+
+    This is the check that makes the counter trustworthy on the methods where no
+    independent count exists (the guided pipeline, whose evaluation total is not
+    a product of loop bounds).
+    """
+    packer = GridPacker(l_shape(12, 9, 5, 4), [], cell_width=3, cell_height=3)
+    _, results = packer.optimize(steps=5, snap_to_edges=False)
+
+    assert packer.evaluations == len(results)
+
+
+def test_each_instance_hands_out_a_fresh_packer():
+    """Two methods must not inherit each other's counter."""
+    instance = Instance("t", "rectangle", rectangle(12, 9), (), 3.0, 3.0)
+
+    first = instance.packer()
+    first.evaluate(0.0, 0.0)
+    second = instance.packer()
+
+    assert first.evaluations == 1
+    assert second.evaluations == 0
+
+
+# --------------------------------------------------------------------------- #
+# the corpus
+# --------------------------------------------------------------------------- #
+
+def test_the_corpus_is_reproducible():
+    """Built twice, identical -- names and geometry.
+
+    The corpus is released as code, so determinism IS the release: a reader who
+    runs this module must get the instances the paper's numbers came from.
+    """
+    first, second = corpus_module.build(quick=True), corpus_module.build(quick=True)
+
+    assert [i.name for i in first] == [i.name for i in second]
+    for a, b in zip(first, second):
+        assert a.shape.equals(b.shape), a.name
+        assert len(a.obstacles) == len(b.obstacles), a.name
+
+
+def test_the_random_plans_are_seeded():
+    same = random_rectilinear(3).equals(random_rectilinear(3))
+    different = random_rectilinear(3).equals(random_rectilinear(4))
+
+    assert same
+    assert not different
+
+
+def test_instance_names_are_unique():
+    """Rows are keyed by name; a collision would silently merge two instances."""
+    names = [i.name for i in corpus_module.build(quick=False)]
+
+    assert len(names) == len(set(names))
+
+
+def test_every_instance_is_a_valid_solvable_problem():
+    for instance in corpus_module.build(quick=True):
+        assert instance.shape.is_valid, instance.name
+        assert instance.shape.area > 0, instance.name
+        assert instance.packer().evaluate(0.0, 0.0).complete >= 0, instance.name
+
+
+@pytest.mark.parametrize("width, height, cw, ch, expected", [
+    (12, 9, 3, 3, 12),          # 4 x 3 cells
+    (12, 9, 2, 3, 18),          # 6 x 3 cells
+    (12, 10, 3, 3, None),       # does not divide: no claim made
+])
+def test_a_known_optimum_is_only_claimed_when_it_is_proven(width, height, cw, ch,
+                                                           expected):
+    assert corpus_module._exact_tiling_optimum(width, height, cw, ch) == expected
+
+
+def test_the_claimed_optimum_of_an_exact_tiling_is_attained():
+    """The claim is checked by attaining it, not by trusting the arithmetic."""
+    instance = Instance("room", "rectangle", rectangle(12, 9), (), 3.0, 3.0,
+                        known_optimum=12)
+    best, _ = instance.packer().optimize_exact(angles=(0.0,))
+
+    assert best.complete == instance.known_optimum
+    assert best.partial == 0
+
+
+def test_a_tilted_exact_tiling_keeps_its_optimum():
+    """The corpus's sharpest claim: rotating a room rigidly cannot change what a
+    grid can do to it, so the tilted instance carries the same known optimum --
+    and reaching it requires finding the rotation."""
+    tilted = shp_rotate(rectangle(12, 9), 23.0)
+    instance = Instance("room-tilt23", "rotated", tilted, (), 3.0, 3.0,
+                        known_optimum=12)
+
+    unrotated, _ = instance.packer().optimize_exact(angles=(0.0,))
+    guided, _ = instance.packer().optimize_guided()
+
+    assert unrotated.complete < instance.known_optimum      # the rotation matters
+    assert guided.complete == instance.known_optimum
+    assert guided.angle == pytest.approx(23.0, abs=0.5)
+
+
+def test_traced_instances_survive_the_image_pipeline():
+    """A rasterised-and-retraced room comes back as the same room, to within the
+    pixel quantisation the tracing introduces -- which is the noise these
+    instances exist to carry."""
+    source = rectangle(24, 18)
+    shape, obstacles = corpus_module.traced(source, scale=0.25)
+
+    assert shape.is_valid
+    assert obstacles == []
+    assert shape.area == pytest.approx(source.area, rel=0.05)
+
+
+# --------------------------------------------------------------------------- #
+# the methods
+# --------------------------------------------------------------------------- #
+
+def test_every_method_is_runnable_and_costs_something():
+    instance = Instance("room", "rectangle", rectangle(12, 9), (), 3.0, 3.0)
+
+    for method in methods_module.build(quick=True):
+        packer = instance.packer()
+        best = method.run(packer)
+
+        assert best.complete >= 0, method.name
+        assert packer.evaluations > 0, method.name
+
+
+def test_classification_is_a_constant_cost_not_a_per_candidate_one():
+    """The taxonomy may not run inside a sweep.
+
+    The guided pipeline genuinely has to classify -- the vote is read off the
+    taxonomy -- so the claim is not "never", it is "a constant number of times":
+    the fringe read that produces the vote, and the probe the area stop spends.
+    Everything else, including every baseline, classifies nothing at all. If
+    classification ever scaled with the number of candidates, the method's
+    wall-clock would carry a cost the baselines do not pay and the comparison in
+    section 11 would be meaningless.
+    """
+    instance = Instance("l", "l_shape", l_shape(12, 9, 5, 4), (), 3.0, 3.0)
+
+    for method in methods_module.build(quick=True):
+        packer = instance.packer()
+        classified = []
+        plain = packer.evaluate
+
+        def counting(*args, classify=False, **kwargs):
+            classified.append(classify)
+            return plain(*args, classify=classify, **kwargs)
+
+        packer.evaluate = counting
+        method.run(packer)
+
+        expected = 2 if method.group in ("grid0pt", "ablation") else 0
+        assert sum(classified) <= expected, method.name
+        assert len(classified) > sum(classified), method.name
+
+
+def test_the_baselines_are_the_original_code_path():
+    """The baseline must be the sweep as it was, not a re-implementation.
+
+    Asserted by its signature behaviour: a uniform sweep evaluates exactly
+    steps x steps offsets when snapping is off.
+    """
+    instance = Instance("room", "rectangle", rectangle(12, 9), (), 3.0, 3.0)
+    method = next(m for m in methods_module.build(quick=True)
+                  if m.name == "uniform-nosnap-s10")
+
+    packer = instance.packer()
+    method.run(packer)
+
+    assert packer.evaluations == 100
+
+
+# --------------------------------------------------------------------------- #
+# the driver
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture(scope="module")
+def rows():
+    instances = [
+        Instance("room", "rectangle", rectangle(12, 9), (), 3.0, 3.0,
+                 known_optimum=12),
+        Instance("room-tilt23", "rotated", shp_rotate(rectangle(12, 9), 23.0),
+                 (), 3.0, 3.0, known_optimum=12),
+    ]
+    methods = [m for m in methods_module.build(quick=True)
+               if m.name in ("uniform-s10", "exact", "guided", "abl-norefine")]
+    return run_module.run(instances, methods, verbose=False)
+
+
+def test_the_driver_measures_every_pair(rows):
+    assert len(rows) == 8
+    assert {r.method for r in rows} == {"uniform-s10", "exact", "guided",
+                                        "abl-norefine"}
+
+
+def test_the_driver_records_cost_and_bounds(rows):
+    for row in rows:
+        assert row.evaluations > 0
+        assert row.seconds >= 0.0
+        assert row.partial_floor >= row.irreducible
+        if row.certified:
+            # The floor is a lower bound, so a certified row cannot sit under it.
+            assert row.optimality_gap >= 0, row.instance
+
+
+def test_the_shortfall_column_is_relative_to_the_best_anyone_reached(rows):
+    for instance in {r.instance for r in rows}:
+        group = [r for r in rows if r.instance == instance]
+
+        assert max(r.complete_vs_best for r in group) == 0
+        assert all(r.complete_vs_best <= 0 for r in group)
+
+
+def test_the_known_answer_column_reports_the_rotation_the_baseline_misses(rows):
+    """On the tilted room the baselines cannot reach the known optimum and the
+    guided method can -- the headline the table has to be able to show."""
+    tilted = {r.method: r for r in rows if r.instance == "room-tilt23"}
+
+    assert tilted["guided"].reached_known_optimum is True
+    assert tilted["uniform-s10"].reached_known_optimum is False
+    assert tilted["exact"].reached_known_optimum is False
+
+
+def test_the_tables_render(rows):
+    """Smoke-test the reporting, so a long run cannot die at the last step."""
+    for table in (run_module.per_method_table(rows),
+                  run_module.ablation_table(rows),
+                  run_module.certificate_table(rows)):
+        assert table.strip()
+        assert not math.isnan(len(table))
+
+
+def test_the_outputs_are_written(rows, tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "RESULTS_DIR", tmp_path)
+    path = run_module.write_outputs(rows, {"quick": True}, "unit")
+
+    assert path.exists()
+    assert (tmp_path / "unit.json").exists()
+    assert path.read_text(encoding="utf-8").count("\n") == len(rows) + 1
