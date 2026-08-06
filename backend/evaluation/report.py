@@ -247,7 +247,7 @@ def build(out_path: Path) -> Path:
         ["repository", "Grid0pt — backend/ (Python), frontend/ (React)"],
         ["design note", "Grid0pt_Method_and_Strategy.pdf, 11 pages, 13 sections"],
         ["work covered", "note roadmap steps 1–4, plus corrections to the note"],
-        ["head at writing", head or "–"],
+        ["head when rendered", head or "–"],
         ["test suite", "243 tests, all passing"],
         ["evaluation", "16 instances × 14 methods = 224 measured rows"],
     ], [38 * mm, W - 38 * mm])]
@@ -719,7 +719,9 @@ def build(out_path: Path) -> Path:
             table([["commit", "subject"]] + list(reversed(entries)),
                   [20 * mm, W - 20 * mm]),
             para("Table 9. This session's work, oldest first. Each was verified "
-                 "against the suite at its own state before being pushed.",
+                 "against the suite at its own state before being pushed. The "
+                 "commit carrying this rendered PDF cannot appear in a table "
+                 "the PDF contains, so it is the one entry always absent.",
                  s["caption"]),
         ]
 
