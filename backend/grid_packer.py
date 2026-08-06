@@ -224,6 +224,30 @@ REFINE_PROBES = 8
 #: partial recoverable in practice (A slabs, B1 pentagons, C2 reflex corners).
 RECOVERABLE_FRACTION_MIN = 0.5
 
+#: The note's section 8.4 stop criterion, in CELL AREAS: once the fringe of the
+#: best placement found so far holds less recoverable area than this, the local
+#: refine is skipped -- "no upside left to turn for".
+#:
+#: Placement. The note reads this at the end of the pipeline; the tempting place
+#: is the entrance, as a should-we-rotate gate. Measured, the entrance separates
+#: nothing: a 24x18 room tilted 12 degrees, where rotating is worth +14 complete
+#: cells, carries 2.89 cells of recoverable area before rotating, and a disc,
+#: where rotating is worth nothing, carries 3.10. Any threshold silencing the
+#: disc silences the headline. That question is R's, and R answers it (0.029 for
+#: the disc against 1.000 for the tilted room). What the fringe area DOES answer
+#: is the one asked a stage later: after the vote's angle has been solved, is
+#: there anything left for the refine to find?
+#:
+#: Trade-off. Measured after the candidate solves, an instance whose walls came
+#: out flush holds exactly 0.00 cells; one still compromising between two wall
+#: families holds 1.2-1.7. Anything in between works; 1.0 is stated in the unit
+#: that makes the argument, since under one cell of reclaimable area there is
+#: not enough on the table to complete even one more cell. The stop costs one
+#: classifying evaluation and saves `REFINE_PROBES` exact translation solves --
+#: 105 evaluations against 905 on the tilted room, for the same count. Set to 0
+#: to run the note's un-gated pipeline (an ablation axis of section 11).
+RECOVERABLE_AREA_MIN = 1.0
+
 #: Which local refine to run: "none", "grid" or "golden".
 #:
 #: The note prescribes a golden-section search. Golden-section assumes a
@@ -1589,6 +1613,7 @@ class GridPacker:
         refine: str = REFINE_METHOD,
         refine_half_window: float = REFINE_HALF_WINDOW,
         refine_probes: int = REFINE_PROBES,
+        recover_min: float = RECOVERABLE_AREA_MIN,
         max_candidates: int = MAX_CANDIDATES,
         bin_deg: float = VOTE_BIN_DEG,
         vote_period: Optional[float] = None,
@@ -1619,6 +1644,11 @@ class GridPacker:
                          "golden" (the note's prescription) or "none".
         refine_probes  : solves the refine may spend; shared budget, whichever
                          method is chosen, so the two are comparable.
+        recover_min    : section 8.4's stop, in cell areas -- skip the refine
+                         once the leading placement's fringe holds less
+                         reclaimable area than this. 0 disables it. See
+                         `RECOVERABLE_AREA_MIN` for why it is read here and not
+                         at the entrance.
         """
         if refine not in ("none", "grid", "golden"):
             raise ValueError(f"unknown refine method: {refine!r}")
@@ -1667,11 +1697,25 @@ class GridPacker:
             # reached the same count -- and the refine turns out not to earn its
             # place at all (see `REFINE_METHOD`), so spending k times more on it
             # would be worse than pointless.
-            centre = max(results, key=lambda p: _objective(p, partial_penalty)).angle
-            if refine == "golden":
+            leader = max(results, key=lambda p: _objective(p, partial_penalty))
+            centre = leader.angle
+
+            worth_it = True
+            if recover_min > 0:
+                # Section 8.4's stop: if the fringe at the leading placement has
+                # nothing left to reclaim, no probe in the window can find
+                # anything, so one classifying evaluation decides against
+                # `refine_probes` solves. See `RECOVERABLE_AREA_MIN`.
+                classified = self.evaluate(leader.dx, leader.dy, centre,
+                                           classify=True)
+                evaluations += 1
+                worth_it = (self._recoverable_area(classified)
+                            >= recover_min * self.cw * self.ch)
+
+            if worth_it and refine == "golden":
                 self._golden_refine(centre, refine_half_window, refine_probes,
                                     solve, partial_penalty)
-            else:
+            elif worth_it:
                 self._grid_refine(centre, refine_half_window, refine_probes, solve)
 
         # Rank on the objective; break exact ties toward the SMALLEST turn from
@@ -1831,8 +1875,10 @@ class GridPacker:
         below `fraction_min` are mostly outside and are not worth turning the
         whole grid for -- see `RECOVERABLE_FRACTION_MIN`.
 
-        Reported by `certificate`: it is the quantity that answers "how much is
-        still on the table?" at a placement.
+        Read twice, for two different questions: `certificate` reports it, and
+        `optimize_guided` stops on it (see `RECOVERABLE_AREA_MIN`). One
+        definition serves both so the number the paper prints is the same number
+        the solver acted on.
         """
         cell_area = self.cw * self.ch
         return sum((1.0 - c.inside_fraction) * cell_area

@@ -158,6 +158,12 @@ def test_guided_costs_far_less_than_the_scan_it_replaces():
     each probe is a full exact-translation solve, and it still comes in under
     the ladder. Which side of that trade to take is the ablation of
     `REFINE_METHOD`, and it should be reported rather than buried.
+
+    On THIS instance the trade does not even arise: the vote's angle leaves the
+    walls flush, so the recoverable-area stop declines to enter the refine at
+    all (see `RECOVERABLE_AREA_MIN`) and the default costs what the un-refined
+    solve costs, plus the one probe that decided it. The forced-refine figure is
+    still measured here, because it is the cost the stop is avoiding.
     """
     packer = GridPacker(tilted_rect(12, 9, 23), cell_width=3, cell_height=3)
 
@@ -165,16 +171,21 @@ def test_guided_costs_far_less_than_the_scan_it_replaces():
     scan_best, scan_batch = packer.optimize_exact(angles=ladder)
 
     unrefined, _ = packer.optimize_guided(refine="none")
-    refined, _ = packer.optimize_guided(refine="grid")
+    refined, _ = packer.optimize_guided(refine="grid", recover_min=0.0)
+    default, _ = packer.optimize_guided()
 
     assert scan_best.complete == 6
     assert unrefined.complete == 12
     assert refined.complete == 12
+    assert default.complete == 12
 
     assert unrefined.rotation_vote.evaluations < len(scan_batch) / 10
     assert refined.rotation_vote.evaluations < len(scan_batch)
-    # The refine, not the vote, is where a guided solve spends its budget.
+    # The refine, not the vote, is where a guided solve spends its budget...
     assert refined.rotation_vote.evaluations > 4 * unrefined.rotation_vote.evaluations
+    # ...which is exactly why the default does not spend it here.
+    assert (default.rotation_vote.evaluations
+            == unrefined.rotation_vote.evaluations + 1)
 
 
 # --------------------------------------------------------------------- #
