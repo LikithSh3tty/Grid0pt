@@ -212,6 +212,18 @@ REFINE_HALF_WINDOW = 5.0
 #: Number of exact-translation solves the refine may spend inside that window.
 REFINE_PROBES = 8
 
+#: Inside fraction above which a partial cell counts as worth reclaiming, used
+#: by the certificate's `recoverable_area` (design note section 8.4's stop
+#: criterion, "sum over f > tau of (1 - f) * area(C)").
+#:
+#: Trade-off. The quantity answers "how much is still on the table?", so it must
+#: not count cells that are mostly outside: a B3 corner triangle at f = 0.05 has
+#: 0.95 of a cell outside the region, and summing those would report a large
+#: upside that no rotation can collect. 0.5 counts a cell only when more of it
+#: is in than out, which is also the point above which the taxonomy calls a
+#: partial recoverable in practice (A slabs, B1 pentagons, C2 reflex corners).
+RECOVERABLE_FRACTION_MIN = 0.5
+
 #: Which local refine to run: "none", "grid" or "golden".
 #:
 #: The note prescribes a golden-section search. Golden-section assumes a
@@ -443,6 +455,69 @@ class RotationVote:
                 f"angle={self.angle:.2f}deg, delta={self.delta:+.2f}deg, "
                 f"R={self.resultant:.3f}, chords={self.chord_count}, "
                 f"candidates={[round(a, 2) for a in self.candidate_angles]})")
+
+
+@dataclass(frozen=True)
+class Certificate:
+    """How close to optimal a placement is guaranteed to be (note section 9).
+
+    partial            : partial cells at this placement.
+    irreducible        : |X| -- regime-X cells (classes E and F). Partial under
+                         EVERY placement, so a hard floor.
+    boundary_length    : L, the perimeter of the usable region including holes.
+    forced_length      : the part of L that no grid angle can lay along a grid
+                         line, and which therefore must cross cell interiors.
+                         This, not L, is what bounds the partial count -- see
+                         `GridPacker.certificate`.
+    best_direction     : the orientation, in [0, 90), carrying the most boundary
+                         length. The angle the floor assumes a grid aligns to.
+    cell_diagonal      : the longest straight boundary piece one cell can hold.
+    boundary_floor     : forced_length / cell_diagonal, the covering bound.
+    observed_max_chord : the most boundary any one partial cell actually holds
+                         here. The boundary floor assumes this stays under the
+                         diagonal; this is the measurement of that assumption.
+    floor              : max(irreducible, ceil(boundary_floor)) -- the fewest
+                         partials any placement of this grid on this region
+                         could have.
+    recoverable_area   : area still outside the region across partials worth
+                         reclaiming; section 8.4's stop criterion. 0 means there
+                         is no upside left to turn for.
+    recover_threshold  : the inside fraction above which a partial counts toward
+                         `recoverable_area`.
+    """
+
+    partial: int
+    irreducible: int
+    boundary_length: float
+    forced_length: float
+    best_direction: float
+    cell_diagonal: float
+    boundary_floor: float
+    observed_max_chord: float
+    floor: int
+    recoverable_area: float
+    recover_threshold: float
+
+    @property
+    def gap(self) -> int:
+        """Partials above the floor. 0 certifies the placement optimal in the
+        partial count; a small value bounds how much better anyone could do."""
+        return self.partial - self.floor
+
+    @property
+    def certified(self) -> bool:
+        """False when the boundary floor's assumption does not hold here.
+
+        A cell holding more boundary than its own diagonal means the boundary
+        wiggles inside a cell, so L / diagonal over-counts the cells needed and
+        the floor -- and therefore the gap -- cannot be relied on.
+        """
+        return self.observed_max_chord <= self.cell_diagonal + _GEOM_TOL
+
+    def __repr__(self) -> str:                     # pragma: no cover - display
+        return (f"Certificate(partial={self.partial}, floor={self.floor}, "
+                f"gap={self.gap}, irreducible={self.irreducible}, "
+                f"certified={self.certified})")
 
 
 @dataclass
@@ -1651,6 +1726,181 @@ class GridPacker:
                 hi, b, fb = b, a, fa
                 a = hi - ratio * (hi - lo)
                 fa = _objective(solve(a), partial_penalty)
+
+    # ------------------------------------------------------------------ #
+    # per-instance optimality certificate (design note section 9)
+    # ------------------------------------------------------------------ #
+    def certificate(
+        self,
+        placement: Placement,
+        *,
+        recover_threshold: float = RECOVERABLE_FRACTION_MIN,
+    ) -> "Certificate":
+        """How far from optimal this placement could possibly be.
+
+        The taxonomy splits the partials into three optimality regimes (note
+        section 9). Regime X -- classes E and F, features smaller than a cell --
+        cannot be recovered by ANY placement, so they are not a failure but a
+        certificate: they bound how well anyone could do on this instance.
+
+        Two independent lower bounds on the partial count are combined.
+
+        |X|, the regime-X cells. Those cells are partial under every placement.
+
+        The boundary-covering floor. Section 9.1 argues that "the region
+        boundary of length L must be covered by partial cells", giving a floor
+        of L / (c * s). As written that is false, and it fails on the simplest
+        instance there is: a 12x9 room at 3x3 cells tiles exactly into 12
+        complete cells and ZERO partials, while L / diagonal claims a floor of
+        10. Boundary that lies ALONG grid lines is covered by the edges of
+        complete cells; only boundary forced through a cell's INTERIOR makes a
+        cell partial.
+
+        So the length that counts is not L. Group the boundary by edge
+        orientation modulo 90 degrees: at grid angle theta, edges oriented
+        theta (mod 90) can be made to lie on grid lines, and every other edge
+        must cross cell interiors. Choosing theta to be the most common
+        orientation minimises what is forced, so
+
+            forced = L - (total length of the single best-aligned direction)
+
+        and the floor is forced / (the most boundary one cell can hold). That
+        denominator the note leaves as "a small constant c" has an exact value:
+        a straight piece of boundary crossing an axis-aligned cell is a chord of
+        that cell, and the longest chord of a cw x ch box is its diagonal.
+
+        This bound is placement-independent -- it holds for every (dx, dy,
+        theta) -- and it is deliberately conservative in two ways, both of which
+        can only make it smaller and therefore still valid: it assumes the best
+        direction can be aligned perfectly, and it ignores that an aligned wall
+        must additionally land ON a grid line rather than merely parallel to one.
+
+        It rests on one assumption: that each cell carries a single straight
+        crossing. A boundary that wiggles inside one cell can hold more than a
+        diagonal's worth, which would make the floor too high and the reported
+        gap too flattering. So the assumption is MEASURED rather than asserted
+        -- `observed_max_chord` is the most boundary any one partial cell
+        actually holds at this placement, and `certified` is False when it
+        exceeds the diagonal. A caller reading the gap can see whether it holds.
+
+        `placement` must have been evaluated with `classify=True`.
+        """
+        if not placement.classified:
+            raise ValueError(
+                "the certificate needs the partial-cell taxonomy: evaluate the "
+                "placement with classify=True first")
+
+        diagonal = math.hypot(self.cw, self.ch)
+        boundary_length = self.usable.length
+
+        irreducible = sum(1 for c in placement.partial_classes
+                          if not c.recoverable)
+
+        recoverable_area = self._recoverable_area(placement, recover_threshold)
+
+        observed_max_chord = max(
+            (c.chord_length for c in placement.partial_classes), default=0.0)
+
+        forced_length, best_direction = self._forced_boundary_length()
+        boundary_floor = forced_length / diagonal if diagonal else 0.0
+        floor = max(irreducible, int(math.ceil(boundary_floor - _GEOM_TOL)))
+
+        return Certificate(
+            partial=placement.partial,
+            irreducible=irreducible,
+            boundary_length=boundary_length,
+            forced_length=forced_length,
+            best_direction=best_direction,
+            boundary_floor=boundary_floor,
+            cell_diagonal=diagonal,
+            observed_max_chord=observed_max_chord,
+            floor=floor,
+            recoverable_area=recoverable_area,
+            recover_threshold=recover_threshold,
+        )
+
+    def _recoverable_area(
+        self,
+        placement: Placement,
+        fraction_min: float = RECOVERABLE_FRACTION_MIN,
+    ) -> float:
+        """How much area is still on the table at this placement.
+
+        Section 8.4's "sum over f > tau of (1 - f) * area(C)": for every partial
+        worth reclaiming, the slice of it currently OUTSIDE the region. Cells
+        below `fraction_min` are mostly outside and are not worth turning the
+        whole grid for -- see `RECOVERABLE_FRACTION_MIN`.
+
+        Reported by `certificate`: it is the quantity that answers "how much is
+        still on the table?" at a placement.
+        """
+        cell_area = self.cw * self.ch
+        return sum((1.0 - c.inside_fraction) * cell_area
+                   for c in placement.partial_classes
+                   if c.recoverable and c.inside_fraction > fraction_min)
+
+    def _forced_boundary_length(
+        self,
+        *,
+        bin_deg: float = VOTE_BIN_DEG,
+    ) -> Tuple[float, float]:
+        """Boundary that no grid angle can lay along a grid line.
+
+        Returns (forced_length, best_direction). Edges are grouped by
+        orientation modulo the alignment period; the direction carrying the most
+        length is the one a grid should align to, and everything else is forced
+        through cell interiors. See `certificate` for why this, and not the full
+        perimeter, is what bounds the partial count.
+
+        `bin_deg` is the tolerance within which two edges count as parallel,
+        because a boundary traced from an image and decimated by
+        Douglas-Peucker scatters a straight wall's orientation by a degree or
+        two. A generous tolerance can only move length INTO the aligned group
+        and so only shrinks the floor, which is the safe direction for a lower
+        bound.
+
+        The candidate directions are the edge orientations themselves rather
+        than fixed bins. Fixed bins put an arbitrary boundary somewhere, and a
+        wall that lands on one is split in half: a rectangle tilted 23 degrees
+        has its two edge families at 23 and 113, which are the same direction
+        modulo 90, but 2-degree bins round them to opposite sides of a bin edge
+        and report half the perimeter as forced -- on a room that tiles exactly.
+        """
+        edges: List[Tuple[float, float]] = []       # (orientation, length)
+        total = 0.0
+        for ring in _iter_rings(self.usable):
+            coords = list(ring.coords)
+            for (x0, y0), (x1, y1) in zip(coords, coords[1:]):
+                length = math.hypot(x1 - x0, y1 - y0)
+                if length <= _GEOM_TOL:
+                    continue
+                total += length
+                edges.append((math.degrees(math.atan2(y1 - y0, x1 - x0))
+                              % _ALIGNMENT_PERIOD, length))
+
+        if not edges:
+            return 0.0, 0.0
+
+        def apart(a: float, b: float) -> float:
+            """Circular separation of two orientations on the alignment circle."""
+            d = abs(a - b) % _ALIGNMENT_PERIOD
+            return min(d, _ALIGNMENT_PERIOD - d)
+
+        best_aligned, best_direction = 0.0, edges[0][0]
+        for candidate, _ in edges:
+            members = [(o, L) for o, L in edges if apart(o, candidate) <= bin_deg]
+            aligned = sum(L for _, L in members)
+            if aligned > best_aligned:
+                # Report the length-weighted mean of the group, not the
+                # candidate edge, so a scattered wall reports its centre.
+                offset = sum(L * _wrap_signed(o - candidate, _ALIGNMENT_PERIOD)
+                             for o, L in members) / aligned
+                best_aligned = aligned
+                best_direction = (candidate + offset) % _ALIGNMENT_PERIOD
+                if best_aligned >= total - _GEOM_TOL:
+                    break                           # everything is one family
+
+        return max(0.0, total - best_aligned), best_direction
 
     # ------------------------------------------------------------------ #
     # visualization
