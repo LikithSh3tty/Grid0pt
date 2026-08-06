@@ -17,6 +17,7 @@ Usage, from the backend directory:
     python -m evaluation.run --full               # the paper run
     python -m evaluation.run --with-reference     # add the brute-force yardstick
     python -m evaluation.run --methods guided,exact --families rotated
+    python -m evaluation.run --report results/*.json   # combine earlier chunks
 
 Output goes to `evaluation/results/` as CSV (one row per instance x method) and
 JSON (the same rows plus the run's parameters, so a table can be regenerated
@@ -259,6 +260,38 @@ def certificate_table(rows: Sequence[Row]) -> str:
     return "\n".join(lines)
 
 
+def load_rows(paths: Sequence[Path]) -> List[Row]:
+    """Re-read rows written by earlier runs.
+
+    A full run does not have to happen in one process. The corpus splits
+    cleanly by family and the expensive families are the ones with many
+    boundary vertices, so running in chunks and reporting over the union is
+    often the only practical way to get the whole table -- and it costs nothing,
+    because a row is a complete measurement on its own.
+    """
+    rows: List[Row] = []
+    seen = set()
+    for path in paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for raw in payload["rows"]:
+            key = (raw["instance"], raw["method"])
+            if key in seen:
+                # Later files win: a re-run of a chunk supersedes the old one.
+                rows = [r for r in rows if (r.instance, r.method) != key]
+            seen.add(key)
+            rows.append(Row(**raw))
+
+    # The shortfall column is relative to the best result on each instance, so
+    # it has to be recomputed over the union rather than trusted per chunk.
+    best: Dict[str, int] = {}
+    for row in rows:
+        best[row.instance] = max(best.get(row.instance, 0), row.complete)
+    for row in rows:
+        row.complete_vs_best = row.complete - best[row.instance]
+
+    return rows
+
+
 def write_outputs(rows: Sequence[Row], meta: dict, stem: str) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     csv_path = RESULTS_DIR / f"{stem}.csv"
@@ -294,7 +327,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--out", default="",
                         help="output file stem (default: quick / full)")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--report", nargs="+", default=None, metavar="JSON",
+                        help="run nothing: report over rows from earlier runs")
     args = parser.parse_args(argv)
+
+    if args.report:
+        paths = [Path(p) for p in args.report]
+        missing = [p for p in paths if not p.exists()]
+        if missing:
+            print(f"no such results file: {missing[0]}", file=sys.stderr)
+            return 2
+        rows = load_rows(paths)
+        print(f"{len(rows)} rows over "
+              f"{len({r.instance for r in rows})} instances\n")
+        print("== per method ==")
+        print(per_method_table(rows))
+        print("\n== ablations, against the full method ==")
+        print(ablation_table(rows))
+        print("\n== certificate ==")
+        print(certificate_table(rows))
+        return 0
 
     quick = not args.full
     instances = corpus_module.build(quick=quick)

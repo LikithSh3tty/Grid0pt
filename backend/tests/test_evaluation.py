@@ -282,6 +282,42 @@ def test_the_tables_render(rows):
         assert not math.isnan(len(table))
 
 
+def test_rows_from_separate_chunks_report_as_one_run(rows, tmp_path, monkeypatch):
+    """A full run may be split across processes, so the report must combine.
+
+    The shortfall column is the thing that cannot simply be concatenated: it is
+    relative to the best result on each instance, so it has to be recomputed
+    over the union. Here each chunk holds a DIFFERENT method for the same
+    instances, which is exactly the case where a per-chunk shortfall would be
+    wrong -- every chunk would call its own method the best there is.
+    """
+    monkeypatch.setattr(run_module, "RESULTS_DIR", tmp_path)
+    weak = [r for r in rows if r.method == "uniform-s10"]
+    strong = [r for r in rows if r.method == "guided"]
+    run_module.write_outputs(weak, {}, "chunk-weak")
+    run_module.write_outputs(strong, {}, "chunk-strong")
+
+    merged = run_module.load_rows([tmp_path / "chunk-weak.json",
+                                   tmp_path / "chunk-strong.json"])
+
+    assert len(merged) == len(weak) + len(strong)
+    tilted = {r.method: r for r in merged if r.instance == "room-tilt23"}
+    assert tilted["guided"].complete_vs_best == 0
+    assert tilted["uniform-s10"].complete_vs_best < 0
+
+
+def test_a_rerun_chunk_supersedes_the_old_one(rows, tmp_path, monkeypatch):
+    """Re-running a chunk must replace its rows, not double them."""
+    monkeypatch.setattr(run_module, "RESULTS_DIR", tmp_path)
+    run_module.write_outputs(rows, {}, "first")
+    run_module.write_outputs(rows, {}, "second")
+
+    merged = run_module.load_rows([tmp_path / "first.json",
+                                   tmp_path / "second.json"])
+
+    assert len(merged) == len(rows)
+
+
 def test_the_outputs_are_written(rows, tmp_path, monkeypatch):
     monkeypatch.setattr(run_module, "RESULTS_DIR", tmp_path)
     path = run_module.write_outputs(rows, {"quick": True}, "unit")
