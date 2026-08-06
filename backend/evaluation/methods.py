@@ -70,6 +70,11 @@ def _exact(packer: GridPacker) -> Placement:
     return best
 
 
+def _columns(packer: GridPacker) -> Placement:
+    best, _ = packer.optimize_columns(angles=(0.0,))
+    return best
+
+
 def _guided(**kwargs) -> Callable[[GridPacker], Placement]:
     def run(packer: GridPacker) -> Placement:
         best, _ = packer.optimize_guided(**kwargs)
@@ -124,7 +129,10 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
 
     methods.append(Method(
         "exact", "grid0pt", _exact,
-        "exact translation over the critical-offset arrangement, no rotation"))
+        "translation by enumerating the critical-offset arrangement, no rotation"))
+    methods.append(Method(
+        "columns", "grid0pt", _columns,
+        "translation with the dy axis solved rather than enumerated, no rotation"))
     methods.append(Method(
         "guided", "grid0pt", _guided(),
         "the full pipeline: exact translation, fringe vote, refine, area stop"))
@@ -136,6 +144,8 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
                "the note's golden-section refine instead of uniform probes"),
         Method("abl-nostop", "ablation", _guided(recover_min=0.0),
                "no recoverable-area stop: always spend the refine budget"),
+        Method("abl-enumerate", "ablation", _guided(translation="exact"),
+               "enumerate the offset arrangement instead of solving the dy axis"),
         Method("abl-nogate", "ablation", _guided(r_min=0.0),
                "no R gate: rotate even when the fringe has no dominant direction"),
         Method("abl-weight0", "ablation", _guided(weight_power=0.0),

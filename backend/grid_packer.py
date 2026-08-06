@@ -1818,6 +1818,7 @@ class GridPacker:
         refine_half_window: float = REFINE_HALF_WINDOW,
         refine_probes: int = REFINE_PROBES,
         recover_min: float = RECOVERABLE_AREA_MIN,
+        translation: str = "columns",
         max_candidates: int = MAX_CANDIDATES,
         bin_deg: float = VOTE_BIN_DEG,
         vote_period: Optional[float] = None,
@@ -1853,11 +1854,23 @@ class GridPacker:
                          reclaimable area than this. 0 disables it. See
                          `RECOVERABLE_AREA_MIN` for why it is read here and not
                          at the entrance.
+        translation    : which translation solver every angle is solved with,
+                         "columns" (default) or "exact". The two answer the same
+                         question; "exact" enumerates the offset arrangement and
+                         "columns" solves the dy axis outright, which is both
+                         cheaper and, on slanted boundaries, strictly better --
+                         see `optimize_columns`. Kept switchable because the
+                         difference between them is an ablation of section 11.
         """
         if refine not in ("none", "grid", "golden"):
             raise ValueError(f"unknown refine method: {refine!r}")
+        if translation not in ("columns", "exact"):
+            raise ValueError(f"unknown translation solver: {translation!r}")
 
-        base_best, results = self.optimize_exact(
+        solve_translation = (self.optimize_columns if translation == "columns"
+                             else self.optimize_exact)
+
+        base_best, results = solve_translation(
             angles=(0.0,), partial_penalty=partial_penalty)
         # Re-evaluate the winning offset WITH the taxonomy. Classification is
         # opt-in precisely so the sweep above does not pay for it, so the one
@@ -1885,7 +1898,7 @@ class GridPacker:
 
         def solve(angle: float) -> Placement:
             nonlocal evaluations
-            best, batch = self.optimize_exact(
+            best, batch = solve_translation(
                 angles=(angle,), partial_penalty=partial_penalty)
             results.extend(batch)
             evaluations += len(batch)

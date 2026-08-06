@@ -34,6 +34,7 @@ from shapely.geometry import Polygon
 
 from grid_packer import (
     R_MIN,
+    REFINE_HALF_WINDOW,
     GridPacker,
     _circular_mean,
 )
@@ -398,10 +399,15 @@ def test_the_refine_recovers_the_optimum_on_a_two_family_shape():
     assert refined.complete == 6
 
     # Note WHERE it got there: not by polishing a candidate onto the 30-33
-    # plateau, but by finding an equally good placement at 1.9 degrees, just off
-    # the wall-aligned candidate at 0. The refine is not a wall-alignment step;
-    # it explores the neighbourhood the vote could not name.
-    assert refined.angle == pytest.approx(1.9, abs=1.0)
+    # plateau, but by finding an equally good placement a few degrees off the
+    # wall-aligned candidate at 0. The refine is not a wall-alignment step; it
+    # explores the neighbourhood the vote could not name. WHICH point of that
+    # neighbourhood it lands on is not a property worth pinning -- the plateau
+    # holds several, and solving the dy axis rather than enumerating it moved
+    # the winner from 1.9 to 4.4 degrees without changing the count -- so what
+    # is asserted is that it stayed inside the refine window and off the
+    # plateau the candidates already offered.
+    assert 0.0 < refined.angle <= REFINE_HALF_WINDOW
 
 
 def test_golden_section_does_not_beat_uniform_sampling():
@@ -410,17 +416,27 @@ def test_golden_section_does_not_beat_uniform_sampling():
     Golden-section assumes a unimodal continuous objective. N_complete(theta) is
     integer-valued and piecewise-constant, so on a plateau the bracket contracts
     on a comparison between two equal values and the search converges to an
-    arbitrary interior point. At an equal probe budget it never wins, and on the
-    two-family shape -- the very case the refine exists for -- it loses to plain
-    sampling of the same window. It stays runnable as an ablation; it is not the
-    default.
+    arbitrary interior point. At an equal probe budget it never wins.
+
+    The strength of the case against it has changed, and honestly reporting that
+    is the point of this test. While translation was solved by enumerating the
+    offset arrangement, golden-section actually LOST here -- 5 against uniform
+    sampling's 6 -- because the placement it converged on could not be rescued
+    by the offsets that search could see. With the dy axis solved outright
+    (`optimize_columns`), the same angle now yields the optimum and golden
+    reaches 6 too. So the claim is no longer "it loses", it is "it does not
+    win", which is still enough to keep uniform sampling as the default and
+    golden as an ablation.
     """
     packer = GridPacker(rhombus(35.0), cell_width=2.5, cell_height=2.5)
 
     grid_refined, _ = packer.optimize_guided(refine="grid")
     golden_refined, _ = packer.optimize_guided(refine="golden")
+    enumerated, _ = packer.optimize_guided(refine="golden", translation="exact")
 
-    assert golden_refined.complete < grid_refined.complete
+    assert golden_refined.complete <= grid_refined.complete
+    # ...and the measurement that used to make the case against it.
+    assert enumerated.complete < grid_refined.complete
 
 
 @pytest.mark.parametrize("name,shape,cw,ch", INSTANCES)

@@ -47,11 +47,12 @@ def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
 def _solve(packer: GridPacker, rotate: bool):
     """Place the grid, and read back what the placement certifies.
 
-    Translation is solved exactly either way -- the critical-offset arrangement
-    replaces the uniform sweep, so there is no `steps` resolution to pick and no
-    sharp optimum to step over. With `rotate` the angle comes from the
-    partial-cell fringe's own orientation vote rather than a fixed 15 degree
-    ladder.
+    Translation is solved either way rather than sampled: the offsets come from
+    the critical arrangement and the dy axis is solved outright, so there is no
+    `steps` resolution to pick, no sharp optimum to step over, and none of the
+    quadratic offset enumeration the sweep did. With `rotate` the angle comes
+    from the partial-cell fringe's own orientation vote rather than a fixed 15
+    degree ladder.
 
     Returns (best, certificate). The best placement is re-evaluated once with
     the taxonomy on so the certificate and the vote diagnostics can be read off
@@ -60,7 +61,7 @@ def _solve(packer: GridPacker, rotate: bool):
     if rotate:
         best, _ = packer.optimize_guided()
     else:
-        best, _ = packer.optimize_exact()
+        best, _ = packer.optimize_columns()
 
     classified = packer.evaluate(best.dx, best.dy, best.angle, classify=True)
     classified.rotation_vote = best.rotation_vote
