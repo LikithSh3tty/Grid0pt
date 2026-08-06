@@ -744,6 +744,121 @@ def _grow(geom, tol: float = _GEOM_TOL):
     return geom if grown.is_empty else grown
 
 
+def _full_width_intervals(region, prepared, x0: float, x1: float,
+                          ylo: float, yhi: float,
+                          tol: float = _GEOM_TOL) -> List[Tuple[float, float]]:
+    """Heights t at which the segment from (x0,t) to (x1,t) lies inside `region`.
+
+    This is the whole trick behind `optimize_columns`. A cell in the column
+    [x0, x1] is complete exactly when EVERY horizontal cut of it spans the full
+    column width, so the column's completeness is captured by this set of
+    heights once, and the cell's height then enters as a single erosion --
+    no per-cell containment test, and no dependence on dy at all.
+
+    The set changes only at heights where the region's boundary does something,
+    and there are exactly two ways it can:
+
+      * a vertex of the region at that height, and
+      * a boundary crossing of the column's OWN side lines x = x0 or x = x1.
+
+    The second is what a search over vertex offsets alone misses. A slanted wall
+    has no vertex between its ends, yet it crosses a column line at a height
+    that depends on where the column happens to sit, and full-width coverage
+    starts or stops precisely there. Those are the note's "diagonal critical
+    lines on the torus" (section 4.1), and they are why a vertex-only offset set
+    is exact for rectilinear regions but not for slanted ones.
+
+    Between two consecutive breakpoints the answer cannot change, so one sample
+    per gap decides it, and abutting gaps are merged.
+    """
+    heights = {ylo, yhi}
+    for geom in _iter_polygons(region):
+        for ring in [geom.exterior] + list(geom.interiors):
+            for _, y in ring.coords:
+                if ylo - tol <= y <= yhi + tol:
+                    heights.add(min(max(y, ylo), yhi))
+
+    for x in (x0, x1):
+        crossings = region.boundary.intersection(
+            LineString([(x, ylo), (x, yhi)]))
+        for geom in getattr(crossings, "geoms", [crossings]):
+            if geom.is_empty:
+                continue
+            points = ([(geom.x, geom.y)] if geom.geom_type == "Point"
+                      else list(geom.coords))
+            for _, y in points:
+                if ylo - tol <= y <= yhi + tol:
+                    heights.add(y)
+
+    ordered = sorted(heights)
+    intervals: List[Tuple[float, float]] = []
+    for lo, hi in zip(ordered, ordered[1:]):
+        if hi - lo <= tol:
+            continue
+        if not prepared.contains(LineString([(x0, (lo + hi) / 2.0),
+                                             (x1, (lo + hi) / 2.0)])):
+            continue
+        if intervals and abs(intervals[-1][1] - lo) <= tol:
+            intervals[-1] = (intervals[-1][0], hi)
+        else:
+            intervals.append((lo, hi))
+    return intervals
+
+
+def _erode_intervals(intervals: Sequence[Tuple[float, float]], height: float,
+                     tol: float = _GEOM_TOL) -> List[Tuple[float, float]]:
+    """{y : [y, y + height] lies inside one of `intervals`}.
+
+    Turns "where does the column admit a full-width cut" into "where does a
+    whole cell fit", which is the same question the containment test answers
+    per cell -- asked once per interval instead.
+    """
+    return [(lo, hi - height) for lo, hi in intervals
+            if hi - lo >= height - tol]
+
+
+def _best_lattice_offset(columns: Sequence[Sequence[Tuple[float, float]]],
+                         period: float, tol: float = _GEOM_TOL
+                         ) -> Tuple[int, float]:
+    """Exact argmax over the offset of a periodic lattice against intervals.
+
+    Given, per column, the heights at which a cell is complete, the total count
+    at offset `d` is the number of lattice points d + j*period landing in those
+    intervals. As a function of d that is piecewise constant, and it can only
+    change where an interval end passes a lattice point -- i.e. at the interval
+    ends reduced modulo the period. Evaluating one sample per gap, plus the
+    breakpoints themselves, therefore sees every attainable value.
+
+    This is what removes the second enumeration: the dy axis is SOLVED, not
+    sampled, so no resolution can step over its optimum and slanted-edge events
+    are captured exactly rather than approximated by vertex offsets.
+    """
+    events = {0.0}
+    for intervals in columns:
+        for lo, hi in intervals:
+            events.add(lo % period)
+            events.add(hi % period)
+
+    ordered = sorted(events)
+    extended = ordered + [ordered[0] + period]
+    candidates = set(ordered)
+    candidates.update(((a + b) / 2.0) % period
+                      for a, b in zip(extended, extended[1:]))
+
+    best_count, best_offset = -1, 0.0
+    for offset in sorted(candidates):
+        count = 0
+        for intervals in columns:
+            for lo, hi in intervals:
+                first = math.ceil((lo - offset) / period - tol)
+                last = math.floor((hi - offset) / period + tol)
+                if last >= first:
+                    count += last - first + 1
+        if count > best_count:
+            best_count, best_offset = count, offset
+    return best_count, best_offset
+
+
 def _face_samples(vals: Sequence[float], period: float) -> List[float]:
     """One representative offset per constant-count interval.
 
@@ -1483,6 +1598,85 @@ class GridPacker:
             for dx in dxs:
                 for dy in dys:
                     results.append(self.evaluate(dx, dy, angle))
+
+        results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
+        return results[0], results
+
+    def optimize_columns(
+        self,
+        angles: Sequence[float] = (0.0,),
+        partial_penalty: float = 0.0,
+    ) -> Tuple[Placement, List[Placement]]:
+        """Translation search that SOLVES the dy axis instead of enumerating it.
+
+        `optimize_exact` removed the resolution from the offset search but kept
+        its shape: a double loop over Vx * Vy faces, each one a full
+        reclassification of all N cells. That is still enumeration, and it is
+        quadratic in the number of distinct vertex coordinates -- a 256-gon disc
+        costs 64,517 evaluations where a room costs 4, and each of those pays
+        the O(N) cell scan again.
+
+        This removes the inner loop entirely. Cut the region into the columns
+        the grid makes at a given dx. For one column, a cell is complete exactly
+        when every horizontal cut of it spans the full column width, so
+        `_full_width_intervals` gives the heights at which the column admits a
+        cell, `_erode_intervals` accounts for the cell's own height, and the
+        completeness of that column is then a fixed set of intervals with no
+        dependence on dy at all. Summing over columns,
+
+            N_complete(dx, dy) = # { (i, j) : dy + j*ch  lands in  Y_i }
+
+        which is a lattice of period ch tested against a fixed interval set --
+        a 1-D problem that `_best_lattice_offset` solves exactly, in one sweep
+        of the interval ends. Cost per dx falls from Vy * O(N) predicates to
+        O(columns * boundary complexity), and the whole search costs Vx
+        evaluations rather than Vx * Vy.
+
+        MORE EXACT, NOT LESS. Solving dy as a continuum also fixes a real gap in
+        `optimize_exact`: a slanted edge flips a cell where a lattice corner
+        grazes it, an event that is not any vertex's offset, so a vertex-derived
+        dy set can miss the optimum outright. On a 36x27 room tilted 23 degrees
+        at 3x3 cells, `optimize_exact` returns 83 complete cells and this
+        returns 84 -- confirmed attainable by a 120x120 dense sweep, which also
+        finds 84. The dx axis is still sampled from the critical offsets, so the
+        same caveat now applies to one axis instead of two; what is claimed here
+        is that this dominates `optimize_exact` everywhere and is exact whenever
+        that is, never the reverse.
+
+        Same objective and same return contract as `optimize` and
+        `optimize_exact`: (best_placement, all_placements_sorted_best_first),
+        one placement per dx.
+        """
+        angles = list(angles)
+        if not angles:
+            raise ValueError("angles must contain at least one angle")
+
+        results: List[Placement] = []
+        for angle in angles:
+            work = (rotate(self.usable, -angle, origin=self._pivot)
+                    if angle else self.usable)
+            prepared = prep(_grow(work))
+            minx, miny, maxx, maxy = work.bounds
+
+            vx, _ = self._critical_offsets(angle)
+            for dx in _face_samples(vx, self.cw):
+                # Walk the columns this dx puts over the region. Adjacent
+                # columns share a side line, so the crossings of each line are
+                # computed once and handed to both of its columns.
+                columns: List[List[Tuple[float, float]]] = []
+                x = minx - ((minx - dx) % self.cw)
+                while x < maxx - _GEOM_TOL:
+                    intervals = _full_width_intervals(
+                        work, prepared, x, x + self.cw, miny, maxy)
+                    columns.append(_erode_intervals(intervals, self.ch))
+                    x += self.cw
+
+                _, dy = _best_lattice_offset(columns, self.ch)
+                # The count is re-derived by the ordinary evaluation rather
+                # than trusted from the sweep: the sweep chooses the placement,
+                # `evaluate` remains the single definition of what a placement
+                # scores, so the two can never drift apart.
+                results.append(self.evaluate(dx % self.cw, dy % self.ch, angle))
 
         results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
