@@ -16,7 +16,7 @@ The outline doesn't have to be a rectangle. L-shapes, irregular rooms, anything 
 - **Packs a polygon with a regular grid** of `cell_width x cell_height` cells, maximizing complete (fully inside) cells and minimizing partial (clipped) ones.
 - **Avoids obstacles.** Interior holes are subtracted from the shape before packing, so cells never land on blocked areas.
 - **Solves the placement instead of scanning for it** — see below. There is no step size to tune and no sharp optimum to step over.
-- **Says how good the answer is.** Every result carries a certificate bounding how far from optimal it could possibly be.
+- **Says how good the answer is.** Every result carries a certificate bounding how far from optimal it could possibly be — and on request, a proof that no placement at *any* angle does better.
 - **Reads shapes from images.** Upload a clean floor plan or a hand-drawn sketch and `image_boundary.py` extracts the outer boundary and interior obstacles automatically: Otsu thresholding, morphological closing to seal gaps in drawn lines, and contour-hierarchy analysis to tell a filled shape from an unfilled outline.
 - **Draw shapes by hand** in the browser, or type in polygon coordinates directly, via the Draw tab's canvas.
 - **Visualizes the result** (shape, obstacles, complete cells, and partial cells) synced between an image view and a canvas view.
@@ -34,6 +34,10 @@ That last part is the whole claim. The overlap depth *is* the complete-cell coun
 Earlier versions solved one axis at a time and are kept as ablations: enumerating the offsets where the count can change (exact for a rectilinear boundary) and then solving the vertical axis as a lattice-against-intervals problem while still enumerating the horizontal one. Both are exact only where the walls are square to the grid — a slanted wall flips a cell where a grid corner grazes it, at an offset no vertex can name — which on a plain trapezoid costs a cell: 59 found where 60 exist.
 
 **Rotation is read off the shape.** Instead of scanning angles, the partial cells along the boundary vote: each obliquely-cut cell contributes its cut orientation, weighted by how much of the cell is inside and how long the cut is. The weighted circular mean is the orientation the walls want the grid to match, and the concentration of that vote decides whether rotating is worth doing at all — a room with a dominant wall gets turned onto it, a disc is left alone. Candidate angles are then solved exactly for translation, with the un-rotated placement kept in the running, so a bad vote costs a little time and never a worse answer.
+
+**The angle can be proven, not just voted for.** The vote is evidence, not proof — nothing in it says a different angle wouldn't do better. Ask for `certify` and the API answers that too, by branch and bound over the angle. Turning by θ moves a point at radius r by exactly `r·θ`, so every angle within a window of some θ₀ sees a region contained in that one grown by `radius × half-window`; erosion is monotone, so the overlap depth of the grown region is an upper bound on the complete count for *every* angle in the window. A window whose bound can't beat the best placement found is discarded whole — without ever locating the angles where the count jumps, which is what makes this tractable when enumerating those jumps is not.
+
+The vote changes job rather than being replaced: it supplies the starting placement, and the search supplies the proof that nothing beats it. Usually the vote was already right and the search only confirms it — 15 windows to prove that 108 cells is the most a 3×3 grid can ever fit in a 36×27 room tilted 23°. A curved boundary is the expensive case, since the count barely varies with angle and nothing prunes on quality. It costs tens of seconds against under one, so it is opt-in; a search that runs out of budget reports the gap it could not close rather than claiming optimality.
 
 **The result is certified.** Cells clipped by a feature smaller than a cell can never be made complete by any placement, and boundary that must cross a cell's interior forces a partial cell wherever the grid sits. Together these bound the fewest partial cells any placement could have, and the API reports the gap between that floor and what was achieved. A gap of zero means no placement of that grid on that region does better. When the bound's assumption doesn't hold for a given shape, the response says so rather than quoting a number that doesn't apply.
 
@@ -114,9 +118,12 @@ Run them from `backend/` — the modules import each other flatly, so the reposi
   "obstacles": [[[40, 20], [60, 20], [60, 40], [40, 40]]],
   "cell_width": 10,
   "cell_height": 10,
-  "rotate": false
+  "rotate": false,
+  "certify": false
 }
 ```
+
+`certify` proves the angle instead of voting for it, and only does anything alongside `rotate`. It costs tens of seconds against well under one, so leave it off unless you want the theorem.
 
 **`POST /api/pack/image`** takes a multipart form with an image `file`, plus `cell_width`, `cell_height`, and `rotate` fields. The outer boundary becomes the shape; enclosed interior regions become obstacles.
 
@@ -135,7 +142,10 @@ Both return the same shape:
     "irreducible": 4, "partial_floor": 6, "optimality_gap": 1,
     "certified": true, "recoverable_area": 0.0,
 
-    "resultant": 0.98, "rotated": true, "evaluations": 38
+    "resultant": 0.98, "rotated": true, "evaluations": 38,
+
+    "rotation_bound": 42, "rotation_gap": 0, "rotation_optimal": true,
+    "rotation_exhausted": true, "rotation_nodes": 15
   }
 }
 ```
@@ -152,8 +162,15 @@ The first block is the placement itself. The rest are diagnostics, and every one
 | `resultant` | how concentrated the boundary orientations were, in `[0, 1]` |
 | `rotated` | whether that was confident enough to turn the grid |
 | `evaluations` | placements evaluated, the cost measure |
+| `rotation_bound` | the most complete cells any placement could hold, **at any angle** |
+| `rotation_gap` | that bound minus what was achieved; `0` proves the result globally optimal |
+| `rotation_optimal` | `true` only when the gap is 0 *and* the search closed the whole angle range |
+| `rotation_exhausted` | `false` when the search hit its node budget — the bound still holds, it just isn't closed |
+| `rotation_nodes` | angular windows examined, the cost measure for the proof |
 
-`resultant`, `rotated` and `evaluations` appear only when rotation was requested.
+`resultant`, `rotated` and `evaluations` appear only when rotation was requested. The `rotation_*` block appears only when `certify` was too.
+
+The two certificates are independent statements. `optimality_gap` bounds the *partial* count from below with a covering argument that doesn't always apply, and says so via `certified`. `rotation_gap` bounds the *complete* count from above, its argument holds for any shape, and it never has to decline.
 
 ## Evaluation
 
@@ -171,7 +188,8 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- Certify the rotation the way translation is certified. Translation is now exact for any shape at a fixed angle; the angle itself is still read off a vote, so a result can be proven optimal among placements at that angle but not across all of them.
+- Measure the rotation certificate in the evaluation harness, so the results table reports how often the vote's answer was already provably optimal instead of leaving that to a one-off run.
+- Tighten the angular bound. It grows the region by `radius × half-window` uniformly, which is conservative for points near the centre; a union of a few rotations across the window, each grown by a fraction of that, would prune sooner on curved boundaries — the case that costs the most nodes today.
 - Cache/memoize repeated packing requests for the same shape + cell size.
 - Let obstacles be drawn directly on top of an uploaded image instead of only detected from it.
 - Export the packed layout (cell centers, count) as CSV/DXF for use in CAD tools.
