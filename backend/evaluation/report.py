@@ -31,7 +31,12 @@ from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether,
 
 BACKEND = Path(__file__).resolve().parent.parent
 REPO = BACKEND.parent
-RESULTS = BACKEND / "evaluation" / "results" / "quick_new.csv"
+#: What `python -m evaluation.run` writes by default (`run.py`'s stem is
+#: "quick" for the quick corpus). It was pinned to a hand-named file, so a
+#: re-run left the tables rendering the previous run's data while the prose
+#: quoted the new one -- the exact drift this module's docstring promises not
+#: to allow.
+RESULTS = BACKEND / "evaluation" / "results" / "quick.csv"
 DEFAULT_OUT = REPO / "Grid0pt_Implementation_Report.pdf"
 
 INK = colors.HexColor("#1a1a1a")
@@ -248,7 +253,7 @@ def build(out_path: Path) -> Path:
         ["design note", "Grid0pt_Method_and_Strategy.pdf, 11 pages, 13 sections"],
         ["work covered", "note roadmap steps 1–4, plus corrections to the note"],
         ["head when rendered", head or "–"],
-        ["test suite", "296 tests, all passing"],
+        ["test suite", "317 tests, all passing"],
         ["evaluation", "16 instances × 16 methods = 256 measured rows"],
     ], [38 * mm, W - 38 * mm])]
 
@@ -273,6 +278,17 @@ def build(out_path: Path) -> Path:
             "placement whatsoever and reaching it proves the placement optimal in "
             "translation — for any shape, not only for a boundary square to the "
             "grid.",
+            s["body"]),
+        para(
+            "The same bound, applied to a window of angles rather than to one, "
+            "closes the last gap. Turning by theta moves a point at radius r by "
+            "r·theta, so a whole angular window is bounded by the erosion of the "
+            "region grown by radius × half-window, and branch and bound over the "
+            "placement period discards windows wholesale without ever locating "
+            "the angles at which the count jumps. The vote of section 3.3 becomes "
+            "the incumbent generator and this becomes the proof. Optimality is "
+            "therefore global — over offsets and angles together — and the answer "
+            "is a theorem about the region rather than the best of a search.",
             s["body"]),
         para(
             "Three claims in the design note did not survive being implemented "
@@ -310,20 +326,21 @@ def build(out_path: Path) -> Path:
             ["§10", "service surfaces the new statistics", "added"],
             ["§11", "corpus, baselines, metrics, ablations", "added"],
             ["—", "column solver: dy solved, not enumerated", "added (superseded, see §4.3)"],
-            ["—", "erosion solver: both axes solved", "added (see §3.2)"],
+            ["—", "erosion solver: both axes solved", "added (see §3.2.1)"],
+            ["—", "rotation certificate: optimality over angles", "added (see §3.5)"],
         ], [16 * mm, 74 * mm, W - 90 * mm]),
         para("Table 1. Design-note sections against the state of the code.", s["caption"]),
 
         para("1.1 Files", s["h2"]),
         table([
             ["file", "lines", "holds"],
-            ["backend/grid_packer.py", "2512", "the solver: evaluate, taxonomy, vote, certificate, the translation searches"],
-            ["backend/packer_service.py", "168", "request path; assembles the stats the API returns"],
+            ["backend/grid_packer.py", "2773", "the solver: evaluate, taxonomy, vote, certificate, the translation searches"],
+            ["backend/packer_service.py", "197", "request path; assembles the stats the API returns"],
             ["backend/evaluation/corpus.py", "350", "instance generators, including proven-optimum families"],
             ["backend/evaluation/methods.py", "177", "baselines, the method, and the one-at-a-time ablations"],
             ["backend/evaluation/run.py", "397", "driver, metrics, reporting, multi-run merge"],
             ["backend/evaluation/report.py", "–", "this document"],
-            ["backend/tests/ (14 modules)", "–", "296 tests"],
+            ["backend/tests/ (15 modules)", "–", "317 tests"],
         ], [52 * mm, 14 * mm, W - 66 * mm], align_right=(1,)),
         para("Table 2. Where the work lives.", s["caption"]),
     ]
@@ -492,8 +509,52 @@ def build(out_path: Path) -> Path:
             "described in section 4.1 below. The reported floor is the larger, "
             "and the gap is the achieved partial count minus that floor; a gap of "
             "zero certifies that no placement of that grid on that region has "
-            "fewer partial cells, including over rotation, which is the part the "
-            "method cannot solve exactly.",
+            "fewer partial cells, including over rotation.",
+            s["body"]),
+
+        para("3.5 Certifying the angle", s["h2"]),
+        para(
+            "Section 3.2.1 settles translation at whatever angle it is asked "
+            "about, which leaves exactly one thing unproven: the angle. The vote "
+            "of 3.3 is evidence, and nothing in it bounds what a different angle "
+            "could reach. Enumerating the angles at which the count jumps is the "
+            "obvious repair and the wrong one — a placement is tight in three "
+            "degrees of freedom, so an event needs three simultaneous contacts "
+            "and the candidate triples run cubic in the boundary size, each a "
+            "trigonometric system.",
+            s["body"]),
+        para(
+            "Bound a whole window of angles instead, and never find the jumps at "
+            "all. Turning by theta moves a point at radius r from the pivot by "
+            "exactly r·theta, so for every theta within a window of theta₀:",
+            s["body"]),
+        code("R(theta)  ⊆  R(theta₀) grown by  radius × half-window\n"
+             "max M(theta) over the window  ≤  maxdepth(fold(erode(that, cell)))",
+             s["mono"]),
+        para(
+            "— the erosion solver's own machinery run once on a slightly "
+            "fattened region. The radius is the minimum bounding circle's rather "
+            "than the centroid pivot's, which roughly halves what a window costs "
+            "on a long room; reading it about a different centre is sound only "
+            "because translation is solved, since rotating about another point "
+            "differs by a translation and the quantity bounded is the maximum "
+            "over translations.",
+            s["body"]),
+        para(
+            "Branch and bound then closes the period. Windows come off a heap "
+            "best-bound-first, so the moment the best remaining bound fails to "
+            "beat the incumbent, every remaining window fails too. Two things "
+            "make it terminate rather than merely converge. The vote seeds it: an "
+            "optimum usually sits at a wall-flush angle attained at one exact "
+            "value, which bisection approaches and never lands on, so an unseeded "
+            "search would keep losing to a bound it could never match. And "
+            "splitting stops once a window is worth less geometry than the "
+            "tolerance every containment test here already grants, at which point "
+            "the bound is the value.",
+            s["body"]),
+        para(
+            "So the vote is not replaced, it is demoted to what it is good at. It "
+            "generates the incumbent; the branch and bound generates the proof.",
             s["body"]),
     ]
 
@@ -658,6 +719,59 @@ def build(out_path: Path) -> Path:
             "exactness does not depend on which way the walls happen to run.",
             s["body"]),
 
+        para("F10. The vote was right every time — and now that is a theorem",
+             s["finding"]),
+        para(
+            "Certifying the whole quick corpus closes the gap on all sixteen "
+            "instances: every one returns a bound equal to what the pipeline "
+            "achieved, so on none of them does any placement of that grid at any "
+            "angle do better. All eight instances with an optimum proven by "
+            "construction are reached, and the other eight — curved, random and "
+            "image-traced, where no optimum was known — are now settled too, "
+            "which is the first time anything in this work has been able to say "
+            "so about them.",
+            s["body"]),
+        para(
+            "The cost profile is the interesting part. Thirteen instances close "
+            "in 15 windows, because the incumbent the vote supplies is already "
+            "optimal and the search only has to confirm it. The exceptions are "
+            "the curved ones: a disc costs 239 windows, since the count barely "
+            "varies with angle, so nothing prunes on quality and the split runs "
+            "down to the tolerance. 522 windows and 862 seconds for the corpus.",
+            s["body"]),
+        para(
+            "This also retires a hedge. Section F4 argued the refine rarely earns "
+            "its cost from the fact that no instance measured showed otherwise, "
+            "which is an argument from absence. On this corpus the answer without "
+            "the refine is now provably optimal, so on these instances the refine "
+            "cannot earn anything — there is nothing left for it to find. The "
+            "parallelogram of F4 remains the case where it does, and it is not in "
+            "the corpus.",
+            s["body"]),
+
+        para("F11. Certifying the corpus found a crash nothing else did",
+             s["finding"]),
+        para(
+            "Reported because of how it hid rather than because it was hard to "
+            "fix. Widening a region for an angular window shrinks its holes, and "
+            "at one window on one instance a 3-wide pillar shrank to 0.8 — "
+            "narrower than the sweep that computes the erosion. Sweeping that "
+            "hole's ring closed it onto itself, and the union of the swept "
+            "parallelograms came back self-touching: a polygon GEOS produces "
+            "willingly and then refuses to consume, failing the next difference "
+            "with “unable to assign free hole to a shell”.",
+            s["body"]),
+        para(
+            "A crash rather than a wrong answer, on instances with obstacles "
+            "only, at one window out of many. 317 tests did not reach it; running "
+            "the certificate over the corpus did, on the ninth instance. Two "
+            "attempts at a regression test for it PASSED against the unfixed "
+            "code, because they approximated the geometry instead of reproducing "
+            "it — a plain buffer rather than the widening the bound applies, and "
+            "the region swept rather than its complement. A test that cannot fail "
+            "is worse than no test, since it reports the bug as fixed.",
+            s["body"]),
+
         para("F7. The certificate answers where a known optimum cannot",
              s["finding"]),
         para(
@@ -667,6 +781,16 @@ def build(out_path: Path) -> Path:
             "bounds the result. Its assumption holds on most of the corpus and it "
             "reports its own failure on the remainder rather than quoting a gap "
             "that does not hold.",
+            s["body"]),
+        para(
+            "The rotation certificate of section 3.5 does not replace it, and "
+            "the two should not be read as one number. This one bounds the "
+            "PARTIAL count from below by a covering argument that can fail to "
+            "apply, and declines on 19% of the corpus when it does. That one "
+            "bounds the COMPLETE count from above by an argument that holds for "
+            "any shape, and never declines — it either closes or reports the gap "
+            "it could not close. Where both are available they are independent "
+            "statements about the same placement.",
             s["body"]),
 
         para("F8. A duplicated cost counter in the test suite", s["finding"]),
@@ -746,6 +870,40 @@ def build(out_path: Path) -> Path:
         para("Table 7. Vx, Vy are the counts of distinct vertex coordinates "
              "modulo the cell size; N is the number of cells over the bounding "
              "box.", s["caption"]),
+
+        para("5.4 What the rotation certificate says", s["h2"]),
+        para(
+            "Every instance in the quick corpus, certified: the bound over all "
+            "angles against what the pipeline achieved. A gap of zero with the "
+            "space closed is the strongest statement in this document — not "
+            "“the best anything here found”, but “no placement "
+            "of this grid on this region, at any angle, holds more cells”.",
+            s["body"]),
+        table([
+            ["instance", "complete", "bound", "windows", "seconds"],
+            ["room-aligned-3x3", "108", "108", "15", "25"],
+            ["room-offset-3x3", "108", "108", "15", "23"],
+            ["room-tilt12-3x3", "108", "108", "15", "32"],
+            ["room-tilt23-3x3", "108", "108", "15", "65"],
+            ["l-shape-3x3", "88", "88", "15", "17"],
+            ["u-shape-3x3", "96", "96", "15", "24"],
+            ["plus-3x3", "80", "80", "15", "17"],
+            ["l-shape-tilt12-3x3", "88", "88", "15", "23"],
+            ["room-pillars-3x3", "101", "101", "15", "26"],
+            ["room-pillars-offgrid-3x3", "91", "91", "30", "45"],
+            ["disc-3x3", "62", "62", "239", "117"],
+            ["stadium-3x3", "80", "80", "27", "67"],
+            ["plan-seed0-3x3", "68", "68", "15", "53"],
+            ["plan-seed1-3x3", "96", "96", "15", "61"],
+            ["traced-l0-3x3", "88", "88", "15", "78"],
+            ["traced-l23-3x3", "77", "77", "46", "190"],
+            ["all sixteen", "—", "gap 0", "522", "862"],
+        ], [46 * mm, 22 * mm, 20 * mm, 22 * mm, W - 110 * mm],
+            align_right=(1, 2, 3, 4)),
+        para("Table 8. 16 of 16 certified globally optimal, and all 8 proven "
+             "optima reached. Curved boundaries cost the most windows: the count "
+             "barely varies with angle, so nothing prunes on quality and the "
+             "split runs to the tolerance.", s["caption"]),
     ]
 
     # ---------------------------------------------------------------- 6
@@ -771,6 +929,12 @@ def build(out_path: Path) -> Path:
              "asserted at or above a dense sweep, and above the column solver, on seven non-rectilinear instances"],
             ["the fold keeps the flush placement",
              "a 36×27 room at 3×3 must return 108, which the zero-area pieces alone carry"],
+            ["the angular bound really bounds its window",
+             "a dense scan of the window is asserted under it, on a tilted room and on one with an obstacle"],
+            ["it sees an optimum hiding inside a window",
+             "a window centred 3° off a flush angle must still bound 108, or branch and bound would prune the interval holding the answer"],
+            ["a certificate never claims more than it proved",
+             "a deliberately tiny node budget must report exhausted=False and decline optimality while still holding a valid bound"],
             ["the 1-D lattice solve is exact",
              "compared against a 2000-point dense scan on five interval sets, including empty"],
             ["the placement reported really scores what is claimed",
@@ -784,16 +948,29 @@ def build(out_path: Path) -> Path:
             ["cost is measured, not inferred",
              "the packer's counter is asserted equal to the number of placements a sweep returns"],
         ], [56 * mm, W - 56 * mm]),
-        para("Table 8. The load-bearing assertions.", s["caption"]),
+        para("Table 9. The load-bearing assertions.", s["caption"]),
 
         para("6.1 How to reproduce", s["h2"]),
         code("cd backend\n"
-             "python -m pytest tests -q                       # 296 tests\n"
+             "python -m pytest tests -q                       # 317 tests\n"
              "python -m evaluation.run                        # quick corpus\n"
              "python -m evaluation.run --full                 # every tilt, cell, seed\n"
              "python -m evaluation.run --with-reference       # add the brute-force yardstick\n"
              "python -m evaluation.run --report results/*.json  # combine chunked runs\n"
              "python -m evaluation.report                     # this document",
+             s["mono"]),
+        para(
+            "Table 8 is not produced by any of those. The certificate is a proof "
+            "rather than a search, so putting it in the methods registry would "
+            "file its cost in a column that means something else; it is run over "
+            "the corpus directly instead, and until it has a column of its own "
+            "the loop that produced those numbers is stated here in full:",
+            s["body"]),
+        code("from evaluation import corpus\n"
+             "for inst in corpus.build(quick=True):\n"
+             "    best, cert = inst.packer().certify_rotation()\n"
+             "    print(inst.name, cert.complete, cert.bound, cert.optimal,\n"
+             "          cert.nodes)",
              s["mono"]),
         para(
             "The corpus is generated from code, not shipped as data, so releasing "
@@ -807,12 +984,21 @@ def build(out_path: Path) -> Path:
     story += [
         para("7. Limitations and what is left", s["h1"]),
         *bullets([
-            "<b>Optimality is per angle, not over angles.</b> Translation is now "
-            "exact for any shape at whatever angle it is asked about, so a result "
-            "can be proven optimal among placements at that angle — but the angle "
-            "itself still comes from a vote, and nothing here bounds what a "
-            "different one could reach. Certifying rotation is the open problem "
-            "the translation work leaves behind.",
+            "<b>The rotation certificate is opt-in, and priced accordingly.</b> "
+            "It costs tens of seconds against under one to merely find the angle, "
+            "so the request path does not run it. A curved boundary is its worst "
+            "case: the count barely varies with angle, so nothing prunes on "
+            "quality and the split runs down to the tolerance.",
+            "<b>The angular bound is uniform in the radius.</b> It grows the "
+            "region by radius × half-window everywhere, which is exactly right at "
+            "the boundary of the turning circle and conservative everywhere "
+            "inside it. A union of several rotations across the window, each "
+            "grown by a fraction of that, is strictly tighter for more geometry "
+            "per node — worth measuring, and not assumed here.",
+            "<b>The certificate is not in the harness.</b> The figures in F10 "
+            "come from a one-off run over the corpus rather than from a method in "
+            "the results table, because a proof and a search do not belong in the "
+            "same cost column. Reporting it properly means a column of its own.",
             "<b>The note's event-driven update was not implemented.</b> Section 5 "
             "offers it as optional, to remove the O(N) factor by recomputing only "
             "cells near a crossed vertex. Both later solvers removed that factor "
@@ -851,7 +1037,7 @@ def build(out_path: Path) -> Path:
             para("8. Commits", s["h1"]),
             table([["commit", "subject"]] + list(reversed(entries)),
                   [20 * mm, W - 20 * mm]),
-            para("Table 9. This session's work, oldest first. Each was verified "
+            para("Table 10. This session's work, oldest first. Each was verified "
                  "against the suite at its own state before being pushed. The "
                  "commit carrying this rendered PDF cannot appear in a table "
                  "the PDF contains, so it is the one entry always absent.",
