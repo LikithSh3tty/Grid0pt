@@ -27,7 +27,11 @@ Sliding the grid by a fraction of a cell changes how many cells fall cleanly ins
 
 Neither axis is searched by sampling any more.
 
-**Translation is solved.** The complete-cell count is piecewise-constant in the offsets — it only changes when a grid line meets the boundary — so the horizontal offsets worth testing are a finite set read off the geometry. For each one, the vertical axis is not tested at all but solved: cut the region into the columns the grid makes, and within a column a cell is complete exactly when every horizontal slice of it spans the full column width. That makes each column a set of height intervals, and the count becomes the number of points of a periodic lattice landing in them — a one-dimensional problem with an exact answer. Cost per offset drops from "reclassify every cell, once per candidate" to a single interval sweep.
+**Translation is solved, on both axes, for any shape.** Stop asking where the grid should go and ask where a single cell may sit. A cell is complete exactly when its corner lies in the region *eroded by the cell* — the set of points from which a whole cell still fits — and that set is computed once, exactly, with polygon operations. Since the grid's corners are a lattice, the complete-cell count is just "how many points of this lattice land in that fixed set". Fold the set modulo the lattice and every offset's count becomes the number of folded pieces stacked over a single point, so the best placement is the deepest overlap, and the deepest overlap sits at a corner of the pieces' outlines. Finitely many candidates, nothing sampled on either axis.
+
+That last part is the whole claim. The overlap depth *is* the complete-cell count as a function of offset, over every offset at once, so its maximum bounds what any placement could achieve — reaching it proves the answer optimal rather than merely better than the sweep it beat. It also makes the search cost one evaluation per angle no matter how complicated the boundary is.
+
+Earlier versions solved one axis at a time and are kept as ablations: enumerating the offsets where the count can change (exact for a rectilinear boundary) and then solving the vertical axis as a lattice-against-intervals problem while still enumerating the horizontal one. Both are exact only where the walls are square to the grid — a slanted wall flips a cell where a grid corner grazes it, at an offset no vertex can name — which on a plain trapezoid costs a cell: 59 found where 60 exist.
 
 **Rotation is read off the shape.** Instead of scanning angles, the partial cells along the boundary vote: each obliquely-cut cell contributes its cut orientation, weighted by how much of the cell is inside and how long the cut is. The weighted circular mean is the orientation the walls want the grid to match, and the concentration of that vote decides whether rotating is worth doing at all — a room with a dominant wall gets turned onto it, a disc is left alone. Candidate angles are then solved exactly for translation, with the un-rotated placement kept in the running, so a bad vote costs a little time and never a worse answer.
 
@@ -38,7 +42,7 @@ Neither axis is searched by sampling any more.
 ```
 grid/
 ├── backend/
-│   ├── grid_packer.py        # GridPacker: cell classification, both translation
+│   ├── grid_packer.py        # GridPacker: cell classification, the translation
 │   │                         #   solvers, the rotation vote, the certificate
 │   ├── image_boundary.py     # image -> (shape, obstacles) via OpenCV contour detection
 │   ├── packer_service.py     # pure packing logic shared by the API and tests
@@ -167,7 +171,7 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- Solve the horizontal axis the way the vertical one is solved; it is still enumerated over a finite set of candidate offsets.
+- Certify the rotation the way translation is certified. Translation is now exact for any shape at a fixed angle; the angle itself is still read off a vote, so a result can be proven optimal among placements at that angle but not across all of them.
 - Cache/memoize repeated packing requests for the same shape + cell size.
 - Let obstacles be drawn directly on top of an uploaded image instead of only detected from it.
 - Export the packed layout (cell centers, count) as CSV/DXF for use in CAD tools.
