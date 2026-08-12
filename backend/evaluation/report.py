@@ -552,8 +552,11 @@ def build(out_path: Path) -> Path:
             "two wall families holds 1.2–1.7. So the reading was placed "
             "there, gating the refine — the expensive stage — rather "
             "than the rotation. One classifying evaluation decides against eight "
-            "exact translation solves: on the tilted rooms, 905 evaluations "
-            "become 105 for an identical complete count.",
+            "translation solves: on the tilted room at 23°, 12 evaluations become "
+            "5 for an identical complete count. Those figures used to read 905 "
+            "and 105; solving both translation axes made a solve cost one "
+            "evaluation instead of one per critical offset, so the stop now saves "
+            "a smaller multiple of a far smaller number.",
             s["body"]),
 
         para("F3. The exact translation search of section 5 is not exact",
@@ -596,9 +599,9 @@ def build(out_path: Path) -> Path:
              "does not", s["finding"]),
         para(
             "Across the tilted rooms and the tilted L, turning the refine on "
-            "multiplied evaluations roughly eightfold and changed the complete "
-            "count on none of them — 105 evaluations against 905 on the "
-            "tilted room. The one instance in the suite where it does change the "
+            "multiplied evaluations severalfold and changed the complete "
+            "count on none of them — 5 evaluations against 12 on the "
+            "tilted room at 23°. The one instance in the suite where it does change the "
             "answer is a parallelogram, whose two wall families are not "
             "perpendicular so that no angle flushes both and the optimum is a "
             "compromise the candidates straddle. The recoverable-area stop keeps "
@@ -624,11 +627,35 @@ def build(out_path: Path) -> Path:
         para("F6. Removing the enumeration is cheaper and better at once",
              s["finding"]),
         para(
-            "Not a trade. On the same corpus, the full pipeline with the old "
-            "translation solver costs 704 evaluations on average against 38, and "
-            "is worse on one instance. The gains concentrate exactly where the "
-            "old cost was quadratic — boundaries with many distinct vertex "
-            "coordinates.",
+            "Not a trade. On the same corpus, the full pipeline costs 4 "
+            "evaluations on average; enumerating the offset arrangement instead "
+            "costs 704 and is worse on one instance, and enumerating only dx "
+            "costs 38. The gains concentrate exactly where the old cost was "
+            "quadratic — boundaries with many distinct vertex coordinates. The "
+            "disc is the clearest single case: 1 evaluation against 30 against "
+            "900, for a better result than the last of them.",
+            s["body"]),
+
+        para("F9. The corpus does not contain the instance that motivated the "
+             "second axis", s["finding"]),
+        para(
+            "Reported because it qualifies the headline. Solving dx as well as dy "
+            "changes the complete count on none of the sixteen corpus instances "
+            "— the dx-enumerating ablation ties the full method everywhere here — "
+            "so the corpus alone would not have justified the work. The "
+            "counterexamples were found by searching for them, and are pinned in "
+            "the test suite rather than in the corpus. What the corpus does "
+            "measure is the other two consequences, and both are real: cost falls "
+            "roughly ninefold at equal quality, and the partial count improves "
+            "where the complete count cannot. On the disc, solving both axes "
+            "returns 62 complete and 38 partial against the dx-enumerating "
+            "solver's 62 and 39, at one evaluation against thirty.",
+            s["body"]),
+        para(
+            "So the claim the measurements support is not “it finds more "
+            "cells on this corpus”. It is that it cannot find fewer, it "
+            "costs a fraction as much, and it is the only one of the three whose "
+            "exactness does not depend on which way the walls happen to run.",
             s["body"]),
 
         para("F7. The certificate answers where a known optimum cannot",
@@ -670,7 +697,7 @@ def build(out_path: Path) -> Path:
                    W - 126 * mm],
                   align_right=(2, 3, 5, 6)),
             para("Table 5. Every method over the quick corpus. The full method "
-                 "reaches every proven optimum at 38 evaluations; the rotation "
+                 "reaches every proven optimum at 4 evaluations; the rotation "
                  "baseline it replaces needs 1059 for a result 4.38 cells worse.",
                  s["caption"]),
         ]
@@ -685,9 +712,11 @@ def build(out_path: Path) -> Path:
                 [40 * mm, 30 * mm, 22 * mm, 26 * mm, W - 118 * mm],
                 align_right=(2, 3, 4)),
             para("Table 6. Per-instance. The disc is where the enumeration was "
-                 "quadratic; the tilted room is where it was also wrong. On the "
-                 "rectilinear plan every exact method is already cheap, and the "
-                 "column solver still halves it.", s["caption"]),
+                 "quadratic — 900 evaluations for 61 cells, against 1 for 62 — "
+                 "and the tilted room is where it was also wrong. On the "
+                 "rectilinear plan every exact method is already cheap, and "
+                 "solving both axes still reduces it to a single evaluation.",
+                 s["caption"]),
         ]
 
         summary = certificate_summary(rows)
