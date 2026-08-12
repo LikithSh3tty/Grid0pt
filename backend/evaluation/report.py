@@ -248,22 +248,31 @@ def build(out_path: Path) -> Path:
         ["design note", "Grid0pt_Method_and_Strategy.pdf, 11 pages, 13 sections"],
         ["work covered", "note roadmap steps 1–4, plus corrections to the note"],
         ["head when rendered", head or "–"],
-        ["test suite", "243 tests, all passing"],
-        ["evaluation", "16 instances × 14 methods = 224 measured rows"],
+        ["test suite", "296 tests, all passing"],
+        ["evaluation", "16 instances × 16 methods = 256 measured rows"],
     ], [38 * mm, W - 38 * mm])]
 
     story += [
         Spacer(1, 8 * mm),
         para("Summary", s["h2"]),
         para(
-            "The placement search no longer samples. Translation is solved: the "
-            "offsets come from the critical-offset arrangement and the vertical "
-            "axis is solved outright rather than enumerated, so the double loop "
-            "that made the old search quadratic is gone. Rotation is read off "
-            "the partial-cell fringe instead of scanned. Every result now "
-            "carries a per-instance certificate bounding how far from optimal "
-            "it could possibly be, and an evaluation harness measures all of it "
+            "The placement search no longer samples, and no longer enumerates "
+            "either. Translation is solved on both axes at once, by asking where "
+            "a single cell may sit rather than where the whole grid should go: "
+            "the answer is the region eroded by the cell, and folding it modulo "
+            "the grid period turns every offset's complete count into an overlap "
+            "depth whose maximum is attained at finitely many points. Rotation is "
+            "read off the partial-cell fringe instead of scanned. Every result "
+            "carries a per-instance certificate bounding how far from optimal it "
+            "could possibly be, and an evaluation harness measures all of it "
             "against the code as it was.",
+            s["body"]),
+        para(
+            "That also changes what can be claimed. The overlap depth is the "
+            "complete count over every offset at once, so its maximum bounds any "
+            "placement whatsoever and reaching it proves the placement optimal in "
+            "translation — for any shape, not only for a boundary square to the "
+            "grid.",
             s["body"]),
         para(
             "Three claims in the design note did not survive being implemented "
@@ -272,7 +281,9 @@ def build(out_path: Path) -> Path:
             "stop criterion of section 8.4 separates nothing where the note "
             "places it, and the exact translation search of section 5 is not in "
             "fact exact on slanted boundaries — a counterexample returns 83 "
-            "complete cells where 84 is attainable.",
+            "complete cells where 84 is attainable. Solving one axis fixed that "
+            "instance without fixing the class: a trapezoid returns 59 where 60 "
+            "is attainable until both axes are solved.",
             s["body"]),
         PageBreak(),
     ]
@@ -298,20 +309,21 @@ def build(out_path: Path) -> Path:
             ["§9", "per-instance optimality certificate", "added (corrected, see §4.1)"],
             ["§10", "service surfaces the new statistics", "added"],
             ["§11", "corpus, baselines, metrics, ablations", "added"],
-            ["—", "column solver: dy solved, not enumerated", "added (see §4.3)"],
+            ["—", "column solver: dy solved, not enumerated", "added (superseded, see §4.3)"],
+            ["—", "erosion solver: both axes solved", "added (see §3.2)"],
         ], [16 * mm, 74 * mm, W - 90 * mm]),
         para("Table 1. Design-note sections against the state of the code.", s["caption"]),
 
         para("1.1 Files", s["h2"]),
         table([
             ["file", "lines", "holds"],
-            ["backend/grid_packer.py", "2217", "the solver: evaluate, taxonomy, vote, certificate, both translation searches"],
-            ["backend/packer_service.py", "167", "request path; assembles the stats the API returns"],
+            ["backend/grid_packer.py", "2512", "the solver: evaluate, taxonomy, vote, certificate, the translation searches"],
+            ["backend/packer_service.py", "168", "request path; assembles the stats the API returns"],
             ["backend/evaluation/corpus.py", "350", "instance generators, including proven-optimum families"],
-            ["backend/evaluation/methods.py", "167", "baselines, the method, and the one-at-a-time ablations"],
+            ["backend/evaluation/methods.py", "177", "baselines, the method, and the one-at-a-time ablations"],
             ["backend/evaluation/run.py", "397", "driver, metrics, reporting, multi-run merge"],
             ["backend/evaluation/report.py", "–", "this document"],
-            ["backend/tests/ (13 modules)", "–", "243 tests"],
+            ["backend/tests/ (14 modules)", "–", "296 tests"],
         ], [52 * mm, 14 * mm, W - 66 * mm], align_right=(1,)),
         para("Table 2. Where the work lives.", s["caption"]),
     ]
@@ -357,7 +369,7 @@ def build(out_path: Path) -> Path:
             "tiling.",
             s["body"]),
 
-        para("3.2 Translation: the column solver", s["h2"]),
+        para("3.2 Translation, first attempt: the column solver", s["h2"]),
         para(
             "The complete count is piecewise-constant in the offsets and jumps "
             "only where a grid line meets a boundary vertex, so a finite set of "
@@ -395,6 +407,68 @@ def build(out_path: Path) -> Path:
             "that depends on where the column happens to sit. These are the "
             "note's own “diagonal critical lines on the torus” from "
             "section 4.1.",
+            s["body"]),
+        para(
+            "This solves dy and leaves dx enumerated over the same vertex-derived "
+            "critical set, so the caveat above moves onto dx rather than going "
+            "away: the diagonal events are exactly as invisible to a vertex "
+            "offset in one axis as in two. Section 4.3 gives the trapezoid where "
+            "that costs a cell.",
+            s["body"]),
+
+        para("3.2.1 Translation, solved: erosion, fold, deepest overlap",
+             s["h2"]),
+        para(
+            "Both axes go together once the question is asked about a cell rather "
+            "than about the grid. A cell is complete exactly when its lower-left "
+            "corner p satisfies",
+            s["body"]),
+        code("p + [0,cw] × [0,ch]  ⊆  U        i.e.   p ∈ F = U ⊖ cell",
+             s["mono"]),
+        para(
+            "F is the region eroded by the cell — a condition on p alone, with "
+            "no reference to any offset. Erosion is not a Shapely primitive, but "
+            "through the complement it becomes a dilation, and a rectangle is "
+            "separable, so F is two segment sweeps of the region's outside: exact "
+            "polygon work, no sampling, obstacles handled for free because a hole "
+            "dilates into a forbidden zone one cell wider than itself.",
+            s["body"]),
+        para(
+            "Cell corners sit at (dx + i·cw, dy + j·ch), so the complete count is "
+            "the number of points of a translated lattice landing in a fixed set. "
+            "Reduce F modulo the lattice — cut it along the grid lines and stack "
+            "the pieces onto one cell of the grid — and that count becomes the "
+            "number of pieces covering the single point (dx, dy):",
+            s["body"]),
+        code("N_complete(dx, dy)  =  # { pieces of F mod lattice covering (dx, dy) }",
+             s["mono"]),
+        para(
+            "So the 2-D search is “where do these pieces overlap most "
+            "deeply”. The pieces are closed, so the depth is upper "
+            "semi-continuous and its maximum survives at a corner of the "
+            "arrangement they cut the cell into; those corners are the endpoints "
+            "of the pieces' outlines once their crossings are noded, which a "
+            "single union computes. Finitely many candidates, nothing sampled on "
+            "either axis, and no assumption about the boundary — which is what "
+            "makes this exact for any shape and not only a rectilinear one.",
+            s["body"]),
+        para(
+            "One detail is load-bearing. A region that tiles exactly meets the "
+            "far grid line flush, so its last column of corners is the edge of F "
+            "— a piece of zero area. Discard it as degenerate and a 36×27 room at "
+            "3×3 reports 88 complete cells instead of the 108 that plainly fit. "
+            "The lower-dimensional pieces are kept for that reason.",
+            s["body"]),
+        para(
+            "The depth is not merely a cheaper search: it is N_complete over the "
+            "whole torus at once, so the deepest overlap is an upper bound on "
+            "every placement there is. The implementation walks the candidates in "
+            "depth order and stops as soon as the placement in hand scores at "
+            "least the next candidate's bound — normally immediately, which puts "
+            "translation at one evaluation per angle regardless of boundary "
+            "complexity. The candidate is still scored by the ordinary "
+            "evaluation, so the search chooses a placement and one definition "
+            "scores it.",
             s["body"]),
 
         para("3.3 Rotation: the fringe vote", s["h2"]),
@@ -497,10 +571,25 @@ def build(out_path: Path) -> Path:
              s["mono"]),
         para(
             "The column solver reaches it because it solves dy as a continuum "
-            "instead of sampling vertex-derived offsets. dx is still enumerated "
-            "over the critical set, so the caveat now applies to one axis rather "
-            "than two; what is claimed is that the new solver dominates the old "
-            "everywhere measured and is exact wherever the old one is.",
+            "instead of sampling vertex-derived offsets. dx stayed enumerated "
+            "over the critical set, however, so this fixed the instance and not "
+            "the class — the same diagonal events are as invisible to a vertex "
+            "offset in one axis as in two. A trapezoid exhibits the other half:",
+            s["body"]),
+        code("trapezoid (0,0) (34,0) (28,22) (5,22), 3×3 cells\n"
+             "  optimize_columns     59 complete\n"
+             "  optimize_erosion     60 complete   <- proven optimal",
+             s["mono"]),
+        para(
+            "“Proven” rather than “found”: the erosion "
+            "solver's overlap depth is the complete count over every offset at "
+            "once, so 60 is not the best of a search but a bound no placement of "
+            "that grid on that region can beat. Two further instances in the "
+            "hunt — a pentagon at 76 against 77, a kite at 57 against 58 — behave "
+            "the same way. The claim that survives is therefore stronger than "
+            "dominance: translation is exact for any shape, and each of the two "
+            "earlier searches is exact only on the strictly smaller class the "
+            "next one subsumes.",
             s["body"]),
 
         para("F4. The local refine rarely earns its cost, and is now free when it "
@@ -569,8 +658,8 @@ def build(out_path: Path) -> Path:
     if rows:
         story += [
             para(
-                "The quick corpus: 16 instances across seven families, 14 "
-                "methods, 224 rows. Quality is reported as the mean shortfall "
+                "The quick corpus: 16 instances across seven families, 16 "
+                "methods, 256 rows. Quality is reported as the mean shortfall "
                 "against the best result any method reached on the same instance, "
                 "so it is comparable across instances of different size. "
                 "“Known hit” counts instances whose optimum is proven "
@@ -591,7 +680,8 @@ def build(out_path: Path) -> Path:
             table(instance_rows(
                 rows,
                 ["disc-3x3", "room-tilt23-3x3", "plan-seed0-3x3"],
-                ["uniform-s10", "fixed15-s10", "exact", "columns", "guided"]),
+                ["uniform-s10", "fixed15-s10", "exact", "columns", "erosion",
+                 "guided"]),
                 [40 * mm, 30 * mm, 22 * mm, 26 * mm, W - 118 * mm],
                 align_right=(2, 3, 4)),
             para("Table 6. Per-instance. The disc is where the enumeration was "
@@ -622,6 +712,7 @@ def build(out_path: Path) -> Path:
             ["uniform sweep", "steps² per angle", "O(N)", "no — resolution-bound"],
             ["critical-offset enumeration", "Vx · Vy per angle", "O(N)", "rectilinear only"],
             ["column solver", "Vx per angle", "O(columns · boundary)", "exact in dy; dx as above"],
+            ["erosion solver", "1 per angle", "O(N)", "yes — any shape"],
         ], [44 * mm, 34 * mm, 38 * mm, W - 116 * mm]),
         para("Table 7. Vx, Vy are the counts of distinct vertex coordinates "
              "modulo the cell size; N is the number of cells over the bounding "
@@ -645,6 +736,12 @@ def build(out_path: Path) -> Path:
              "equality of the optimum on five rectilinear instances and three cell aspect ratios"],
             ["it beats the enumeration where that is not exact",
              "a 120×120 dense sweep arbitrates the tilted room; dominance asserted on five tilts and a disc"],
+            ["the erosion solver attains its own upper bound",
+             "achieved count asserted equal to the overlap depth on ten shapes and four cell aspects — a proof, not a comparison"],
+            ["and the bound is not an artefact of the argument that produced it",
+             "asserted at or above a dense sweep, and above the column solver, on seven non-rectilinear instances"],
+            ["the fold keeps the flush placement",
+             "a 36×27 room at 3×3 must return 108, which the zero-area pieces alone carry"],
             ["the 1-D lattice solve is exact",
              "compared against a 2000-point dense scan on five interval sets, including empty"],
             ["the placement reported really scores what is claimed",
@@ -662,7 +759,7 @@ def build(out_path: Path) -> Path:
 
         para("6.1 How to reproduce", s["h2"]),
         code("cd backend\n"
-             "python -m pytest tests -q                       # 243 tests\n"
+             "python -m pytest tests -q                       # 296 tests\n"
              "python -m evaluation.run                        # quick corpus\n"
              "python -m evaluation.run --full                 # every tilt, cell, seed\n"
              "python -m evaluation.run --with-reference       # add the brute-force yardstick\n"
@@ -681,15 +778,22 @@ def build(out_path: Path) -> Path:
     story += [
         para("7. Limitations and what is left", s["h1"]),
         *bullets([
-            "<b>dx is still enumerated.</b> The critical-offset set is exact for "
-            "rectilinear regions and a strong superset elsewhere, but the same "
-            "diagonal-event argument that broke the old dy set applies to it. "
-            "Typically 2–30 values, and only one axis.",
+            "<b>Optimality is per angle, not over angles.</b> Translation is now "
+            "exact for any shape at whatever angle it is asked about, so a result "
+            "can be proven optimal among placements at that angle — but the angle "
+            "itself still comes from a vote, and nothing here bounds what a "
+            "different one could reach. Certifying rotation is the open problem "
+            "the translation work leaves behind.",
             "<b>The note's event-driven update was not implemented.</b> Section 5 "
             "offers it as optional, to remove the O(N) factor by recomputing only "
-            "cells near a crossed vertex. The column solver removed that factor "
-            "from the inner loop by a different route, so the remaining motive is "
-            "the dx loop alone.",
+            "cells near a crossed vertex. Both later solvers removed that factor "
+            "by other routes, and the erosion solver removed the offset loop it "
+            "would have accelerated, so the motive is gone rather than deferred.",
+            "<b>The erosion is polygon work, and pays for boundary complexity "
+            "there instead.</b> Evaluations no longer grow with the number of "
+            "vertices, but the erosion and the fold do: a 256-gon dilates 256 "
+            "edges and folds into as many pieces as the region has cells. It is "
+            "linear rather than quadratic, and it is not free.",
             "<b>The certificate can decline to certify.</b> When a single cell "
             "holds more boundary than its own diagonal the covering bound "
             "over-counts, and the certificate reports that rather than quoting a "
