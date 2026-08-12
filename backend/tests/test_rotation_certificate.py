@@ -136,6 +136,53 @@ def test_a_negative_window_is_refused():
         packer(room()).rotation_bound(0.0, -1.0)
 
 
+def test_a_window_that_nearly_closes_an_obstacle_does_not_break_the_geometry():
+    """Regression: GEOS could not difference the swept complement here.
+
+    Widening the region for a window SHRINKS its holes, and this window shrinks
+    a 3-wide pillar to 0.8. Sweeping the ring of a hole that thin produced
+    parallelograms whose union self-touched, which is an invalid polygon, and
+    the difference that follows it failed outright with "unable to assign free
+    hole to a shell" -- a crash, not a wrong answer, and only on an instance
+    with obstacles at one particular window.
+
+    Found by certifying the evaluation corpus, which is why these numbers look
+    arbitrary: they are the window the search actually reached.
+    """
+    pillars = (Polygon([(9, 9), (15, 9), (15, 15), (9, 15)]),
+               Polygon([(24, 6), (27, 6), (27, 15), (24, 15)]))
+    pk = packer(room(), pillars)
+
+    assert pk.rotation_bound(59.0625, 2.8125) > 0
+
+
+@pytest.mark.parametrize("half_window", [2.8125, 5.625, 11.25])
+def test_eroding_a_widened_region_survives_a_nearly_closed_hole(half_window):
+    """The same failure at the helper that actually raises it.
+
+    The region is widened exactly as `rotation_bound` widens it, constants and
+    all, because the invalidity lives at particular coordinates: a plain buffer,
+    or sweeping the region instead of its complement, both produce valid
+    geometry and a test that asserts nothing.
+    """
+    from shapely.affinity import rotate as shp_rot
+    from grid_packer import (_BUFFER_INSCRIBED_RATIO, _BUFFER_QUAD_SEGS,
+                             _erode_by_cell)
+
+    pillars = (Polygon([(9, 9), (15, 9), (15, 15), (9, 15)]),
+               Polygon([(24, 6), (27, 6), (27, 15), (24, 15)]))
+    pk = packer(room(), pillars)
+    centre, radius = pk._turning_circle
+    slack = radius * np.radians(half_window) / _BUFFER_INSCRIBED_RATIO
+    work = shp_rot(pk.usable, -59.0625, origin=centre).buffer(
+        slack, quad_segs=_BUFFER_QUAD_SEGS)
+
+    eroded = _erode_by_cell(work, 3.0, 3.0)
+
+    assert eroded.is_valid
+    assert not eroded.is_empty
+
+
 def test_the_bound_costs_no_evaluations():
     """It is geometry, not placement scoring, so it must not touch the counter
     the paper reports as cost."""

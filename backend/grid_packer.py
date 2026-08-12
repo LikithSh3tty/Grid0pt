@@ -976,6 +976,14 @@ def _dilate_by_segment(geom, dx: float, dy: float):
 
     Edges parallel to (dx, dy) sweep out nothing and are skipped; their
     parallelogram is degenerate and would only hand GEOS an invalid ring.
+
+    The union is repaired before it is returned. Sweeping the ring of a hole
+    barely wider than the sweep itself closes that hole onto itself, and the
+    union of the overlapping parallelograms comes back self-touching -- a
+    polygon GEOS accepts as output and then refuses as input, failing the very
+    next difference with "unable to assign free hole to a shell". `make_valid`
+    is cheap here and turns a crash on one instance in the corpus into the
+    answer that was already geometrically correct.
     """
     parts = [geom, translate(geom, dx, dy)]
     for ring in _iter_rings(geom):
@@ -985,7 +993,9 @@ def _dilate_by_segment(geom, dx: float, dy: float):
                              (bx + dx, by + dy), (ax + dx, ay + dy)])
             if swept.is_valid and swept.area > 0.0:
                 parts.append(swept)
-    return unary_union(parts)
+
+    united = unary_union(parts)
+    return united if united.is_valid else shapely.make_valid(united)
 
 
 def _erode_by_cell(region, cw: float, ch: float):
