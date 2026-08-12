@@ -39,6 +39,7 @@ from shapely.affinity import rotate, translate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 from shapely.prepared import prep
+from shapely.strtree import STRtree
 
 
 # --------------------------------------------------------------------------- #
@@ -859,6 +860,219 @@ def _best_lattice_offset(columns: Sequence[Sequence[Tuple[float, float]]],
     return best_count, best_offset
 
 
+# --------------------------------------------------------------------------- #
+# both axes at once: erosion, fold, deepest overlap (design note section 4.1)
+# --------------------------------------------------------------------------- #
+# `optimize_columns` solves dy as a continuum but still enumerates dx from the
+# region's vertices, and that set is exhaustive only for a rectilinear boundary:
+# a slanted edge flips a cell where a lattice CORNER grazes it, a diagonal event
+# line in (dx, dy) that is no vertex's offset. The fix is not a bigger candidate
+# set, it is dropping the per-offset viewpoint entirely.
+#
+# A cell with lower-left corner p is complete exactly when p + [0,cw]x[0,ch]
+# lies inside the region -- a condition on p alone, with no reference to the
+# grid. The set of such p is the region ERODED by the cell,
+#
+#     F = { p : p + [0,cw]x[0,ch]  is inside  U },
+#
+# computed once, exactly, by polygon operations. `_generate_cells` puts cell
+# corners at (dx + i*cw, dy + j*ch), so
+#
+#     N_complete(dx, dy) = # { (i, j) : (dx + i*cw, dy + j*ch) in F },
+#
+# the number of points of a translated lattice landing in a FIXED set. Reduce F
+# modulo the lattice and that count becomes the number of folded pieces covering
+# the single point (dx, dy): the whole 2-D search is now "where do these pieces
+# overlap most deeply", a question with finitely many answers and no sampling on
+# either axis. Which is what makes the result exact for ANY shape, not only a
+# rectilinear one.
+
+
+def _dilate_by_segment(geom, dx: float, dy: float):
+    """`geom` swept along the segment from (0,0) to (dx,dy) -- a Minkowski sum.
+
+    Exact, and cheap, because the summand is a segment: a point of the sum is
+    either in `geom`, or in `geom` translated the full way, or in the strip some
+    boundary edge sweeps out on its way there. Taking the parallelogram of every
+    boundary edge therefore closes every gap the two end translates leave -- a
+    component narrower than the sweep is bridged by the parallelogram hanging off
+    its own leading edge.
+
+    Edges parallel to (dx, dy) sweep out nothing and are skipped; their
+    parallelogram is degenerate and would only hand GEOS an invalid ring.
+    """
+    parts = [geom, translate(geom, dx, dy)]
+    for ring in _iter_rings(geom):
+        coords = list(ring.coords)
+        for (ax, ay), (bx, by) in zip(coords, coords[1:]):
+            swept = Polygon([(ax, ay), (bx, by),
+                             (bx + dx, by + dy), (ax + dx, ay + dy)])
+            if swept.is_valid and swept.area > 0.0:
+                parts.append(swept)
+    return unary_union(parts)
+
+
+def _erode_by_cell(region, cw: float, ch: float):
+    """{ p : p + [0,cw]x[0,ch] lies inside `region` } -- the corners a cell fits at.
+
+    Erosion is not a Shapely primitive, so it is taken through the complement,
+    where it becomes a dilation:
+
+        p + B inside R   <=>   (p + B) misses everything outside R
+                         <=>   p is not in  outside(R) (+) (-B)
+
+    and a rectangle is separable, B = H (+) V, so the dilation is two segment
+    sweeps rather than one general Minkowski sum. `outside` is taken against a
+    frame padded well past a cell, so every obstruction a candidate corner could
+    reach is inside the frame and the complement is bounded.
+
+    Obstacles need no special handling: they are already holes in `region`, and
+    a hole dilates into a forbidden zone one cell wider than itself, which is
+    exactly the set of corners whose cell would clip it.
+    """
+    if region.is_empty:
+        return Polygon()
+
+    minx, miny, maxx, maxy = region.bounds
+    pad = 2.0 * (cw + ch)
+    frame = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
+
+    blocked = _dilate_by_segment(frame.difference(region), -cw, 0.0)
+    blocked = _dilate_by_segment(blocked, 0.0, -ch)
+    return frame.difference(blocked)
+
+
+def _fold_tiles(eroded, cw: float, ch: float) -> List:
+    """`eroded` cut along the lattice and stacked into one cell of it.
+
+    The count at an offset is the number of lattice points in `eroded`, and
+    lattice points differ by whole periods, so translating the piece in each
+    lattice cell back to the origin turns "count the points of this lattice"
+    into "count the pieces covering this one point".
+
+    DEGENERATE PIECES ARE KEPT, and that is not a detail. A region that tiles
+    exactly meets the far lattice line flush: its last column of corners is the
+    EDGE of `eroded`, a piece of zero area. Dropping it as empty would discard
+    the flush placement -- precisely the optimum -- and quietly report the best
+    non-flush one instead. The lattice range is padded by one cell on each side
+    so a piece touching a cell's far side is also present as one touching the
+    near side of the next, which is what makes the fold agree at the seam.
+    """
+    if eroded.is_empty:
+        return []
+
+    minx, miny, maxx, maxy = eroded.bounds
+    tiles = []
+    for i in range(math.floor(minx / cw) - 1, math.ceil(maxx / cw) + 1):
+        for j in range(math.floor(miny / ch) - 1, math.ceil(maxy / ch) + 1):
+            piece = eroded.intersection(
+                box(i * cw, j * ch, (i + 1) * cw, (j + 1) * ch))
+            if not piece.is_empty:
+                tiles.append(translate(piece, -i * cw, -j * ch))
+    return tiles
+
+
+def _boundary_lines(geom) -> List:
+    """The linework of `geom`, whatever dimension it came back as.
+
+    A folded piece is usually a polygon, but the flush case above makes it a
+    line and a corner case makes it a point, and a piece clipped at a lattice
+    corner arrives as a collection of all three.
+    """
+    gt = geom.geom_type
+    if geom.is_empty:
+        return []
+    if gt in ("Polygon", "MultiPolygon"):
+        return [geom.boundary]
+    if gt in ("LineString", "LinearRing", "MultiLineString"):
+        return [geom]
+    if gt == "GeometryCollection":
+        lines: List = []
+        for part in geom.geoms:
+            lines.extend(_boundary_lines(part))
+        return lines
+    return []                                   # Point / MultiPoint: no linework
+
+
+def _geom_coords(geom) -> Iterator[Tuple[float, float]]:
+    """Every coordinate in `geom`, of any type or nesting."""
+    gt = geom.geom_type
+    if geom.is_empty:
+        return
+    if gt == "Point":
+        yield (geom.x, geom.y)
+    elif gt == "Polygon":
+        yield from geom.exterior.coords
+        for ring in geom.interiors:
+            yield from ring.coords
+    elif gt in ("LineString", "LinearRing"):
+        yield from geom.coords
+    else:
+        for part in geom.geoms:
+            yield from _geom_coords(part)
+
+
+def _ranked_offsets(tiles: Sequence, cw: float, ch: float,
+                    tol: float = _GEOM_TOL) -> List[Tuple[int, float, float]]:
+    """Every offset worth trying, deepest overlap first.
+
+    The depth at (dx, dy) -- how many folded pieces cover it -- IS N_complete at
+    that offset, so the deepest point is the optimum and its depth is an upper
+    bound on what any placement whatsoever can reach. Two facts make the search
+    finite and exact:
+
+      * the pieces are CLOSED, so depth is upper semi-continuous: a point on a
+        piece's edge counts, and a limit point counts at least as much as what
+        approaches it. The maximum therefore survives at a corner of the
+        arrangement the pieces cut the cell into, and never hides strictly
+        inside a face where no candidate lands;
+      * those corners are exactly the endpoints of the pieces' outlines once
+        their crossings are noded, which `unary_union` computes outright.
+
+    So a full sweep of both axes reduces to counting containment at a handful of
+    points. (0,0) is always a candidate, which covers the degenerate arrangement
+    with no corners at all -- every piece the whole cell, or none.
+
+    Candidates are wrapped into the period, which folds the far seam of the cell
+    onto the near one; `_fold_tiles` pads its lattice range for that reason, so
+    the piece meeting one seam is present at the other and the two agree.
+
+    `tol` is `_GEOM_TOL` because the pieces are eroded from the UN-grown region
+    (see `optimize_erosion`): counting a corner that misses a piece by less than
+    the tolerance is the same allowance `evaluate` makes when it tests
+    containment against the grown region, so the two agree cell for cell. Spend
+    the tolerance on both -- grow the region AND pad the count -- and the depth
+    stops being a bound the result can attain.
+    """
+    if not tiles:
+        return [(0, 0.0, 0.0)]
+
+    lines: List = []
+    for tile in tiles:
+        lines.extend(_boundary_lines(tile))
+
+    # Reduced modulo the period but NOT rounded: `_wrap`'s quantisation to
+    # `_COORD_DECIMALS` would shift a candidate off the very piece edge it was
+    # read from, by more than the noding error this is trying to survive.
+    candidates = {(0.0, 0.0)}
+    if lines:
+        for x, y in _geom_coords(unary_union(lines)):
+            candidates.add((x % cw, y % ch))
+    for tile in tiles:                          # point pieces carry no linework
+        if tile.geom_type in ("Point", "MultiPoint"):
+            for x, y in _geom_coords(tile):
+                candidates.add((x % cw, y % ch))
+
+    tree = STRtree(list(tiles))
+    ranked = [(int(len(tree.query(Point(u, v), predicate="dwithin",
+                                  distance=tol))), u, v)
+              for u, v in candidates]
+    # Deepest first; ties ordered by offset so the result is deterministic and
+    # the smallest offset wins, matching the other solvers' tie behaviour.
+    ranked.sort(key=lambda r: (-r[0], r[1], r[2]))
+    return ranked
+
+
 def _face_samples(vals: Sequence[float], period: float) -> List[float]:
     """One representative offset per constant-count interval.
 
@@ -1677,6 +1891,82 @@ class GridPacker:
                 # `evaluate` remains the single definition of what a placement
                 # scores, so the two can never drift apart.
                 results.append(self.evaluate(dx % self.cw, dy % self.ch, angle))
+
+        results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
+        return results[0], results
+
+    def optimize_erosion(
+        self,
+        angles: Sequence[float] = (0.0,),
+        partial_penalty: float = 0.0,
+    ) -> Tuple[Placement, List[Placement]]:
+        """Translation solved on BOTH axes, exactly, for any shape.
+
+        `optimize_columns` solved dy outright but left dx enumerated over the
+        region's vertex offsets, and that set is complete only for a rectilinear
+        boundary -- a slanted edge flips a cell where a lattice corner grazes it,
+        which is no vertex's offset. The caveat moved from two axes to one; it
+        did not go away. On a plain trapezoid the enumeration tops out at 59
+        complete cells where 60 are there to be had.
+
+        Here neither axis is enumerated. Completeness is rewritten as a
+        condition on the cell's corner alone -- the corner must lie in the region
+        eroded by the cell, `_erode_by_cell` -- so the count becomes a lattice
+        point count against a fixed set, `_fold_tiles` folds that lattice onto
+        one cell of itself, and `_ranked_offsets` reads the answer off the
+        deepest overlap. See the section header above those three for the
+        derivation.
+
+        THE RESULT IS OPTIMAL BY PROOF, NOT BY COMPARISON. The overlap depth is
+        N_complete as a function of offset over the whole torus, with nothing
+        sampled, so the deepest overlap bounds every placement there is. The
+        search below walks the candidates in depth order and stops as soon as the
+        placement in hand scores at least the next candidate's depth -- which,
+        the first candidate having already attained the bound, is normally
+        immediately. Translation therefore costs ONE evaluation per angle
+        regardless of how complicated the boundary is, against Vx for
+        `optimize_columns` and Vx * Vy for `optimize_exact`.
+
+        The candidate is scored by `evaluate` rather than trusted from the fold,
+        for the same reason `optimize_columns` re-derives its count: the search
+        chooses a placement, `evaluate` remains the single definition of what a
+        placement scores, and the two can never drift apart. The stopping rule
+        only ever costs an extra evaluation, never a worse answer -- a candidate
+        is left for the next one only when the next one could still beat it.
+
+        Same objective and same return contract as `optimize`, `optimize_exact`
+        and `optimize_columns`: (best_placement, all_placements_sorted_best_first),
+        one placement per angle.
+        """
+        angles = list(angles)
+        if not angles:
+            raise ValueError("angles must contain at least one angle")
+
+        results: List[Placement] = []
+        for angle in angles:
+            work = (rotate(self.usable, -angle, origin=self._pivot)
+                    if angle else self.usable)
+            # Eroded from the region ITSELF, not from `_grow`'s tolerant copy.
+            # The offsets this produces are the extremes of the erosion -- cells
+            # flush against a wall -- so eroding the grown region would put the
+            # winning cell flush against a wall that is `_GEOM_TOL` beyond the
+            # real one, which is exactly the knife edge `evaluate` cannot decide
+            # and `_grow` exists to keep it off. Eroding the true region instead
+            # leaves the flush cell a whole tolerance INSIDE what `evaluate`
+            # accepts. The tolerance is then spent once, in `_ranked_offsets`,
+            # where it reproduces the same allowance rather than doubling it.
+            tiles = _fold_tiles(_erode_by_cell(work, self.cw, self.ch),
+                                self.cw, self.ch)
+
+            best: Optional[Placement] = None
+            for depth, dx, dy in _ranked_offsets(tiles, self.cw, self.ch):
+                if best is not None and best.complete >= depth:
+                    break                       # nothing below can beat it
+                placement = self.evaluate(dx, dy, angle)
+                if best is None or _objective(placement, partial_penalty) > \
+                        _objective(best, partial_penalty):
+                    best = placement
+            results.append(best)
 
         results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
