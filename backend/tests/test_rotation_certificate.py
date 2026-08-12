@@ -144,3 +144,89 @@ def test_the_bound_costs_no_evaluations():
     pk.rotation_bound(20.0, 5.0)
 
     assert pk.evaluations == 0
+
+
+# --------------------------------------------------------------------------- #
+# the search the bound makes possible
+# --------------------------------------------------------------------------- #
+#: Small enough to certify in seconds. A 12x9 room tiles exactly at 3x3, and
+#: tilting it rigidly cannot change what a grid can do to it, so 12 is the
+#: optimum at 23 degrees and provably nowhere better at any other angle.
+def small_room(tilt=0.0) -> Polygon:
+    return shp_rotate(Polygon([(0, 0), (12, 0), (12, 9), (0, 9)]), tilt) \
+        if tilt else Polygon([(0, 0), (12, 0), (12, 9), (0, 9)])
+
+
+def test_it_proves_the_optimum_of_a_shape_whose_optimum_is_known():
+    """The instance where the answer is known independently of any solver: a
+    room whose sides are multiples of the cell tiles perfectly, and rotating it
+    rigidly cannot change what a grid can do to it. So 12 is the optimum, and
+    the certificate has to both reach it and close on it."""
+    pk = packer(small_room(tilt=23.0))
+
+    best, certificate = pk.certify_rotation()
+
+    assert best.complete == 12
+    assert certificate.bound == 12
+    assert certificate.optimal
+
+
+def test_the_bound_it_reports_is_never_below_what_it_achieved():
+    """A certificate claiming less than the placement it certifies would be
+    incoherent, and is the failure mode a wrong inequality shows up as."""
+    for shape in (small_room(), small_room(tilt=23.0), l_shape()):
+        pk = packer(shape)
+
+        best, certificate = pk.certify_rotation(max_nodes=40)
+
+        assert certificate.bound >= best.complete
+        assert certificate.complete == best.complete
+
+
+def test_it_never_returns_less_than_the_pipeline_it_certifies():
+    """The vote's answer seeds the search, so the certificate can only improve
+    on it. A certificate that cost a cell would be worse than no certificate."""
+    pk = packer(small_room(tilt=23.0))
+    guided, _ = packer(small_room(tilt=23.0)).optimize_guided()
+
+    best, _ = pk.certify_rotation()
+
+    assert best.complete >= guided.complete
+
+
+def test_a_budget_too_small_says_so_instead_of_claiming_optimality():
+    """The honest failure. A search that runs out of budget still holds a valid
+    upper bound -- it just has not closed the gap -- and it must report that
+    rather than quoting the incumbent as optimal."""
+    pk = packer(room(tilt=23.0))          # the big room: no chance in 3 nodes
+
+    best, certificate = pk.certify_rotation(max_nodes=3)
+
+    assert not certificate.exhausted
+    assert not certificate.optimal
+    assert certificate.bound >= best.complete
+
+
+def test_the_search_is_seedable_so_a_known_placement_can_be_certified():
+    """Certifying a placement someone already has is the other use for this, and
+    it must not throw away an incumbent better than the vote's."""
+    pk = packer(small_room(tilt=23.0))
+    seed, _ = packer(small_room(tilt=23.0)).optimize_erosion(angles=(23.0,))
+
+    best, certificate = pk.certify_rotation(seed=seed)
+
+    assert best.complete == 12
+    assert certificate.optimal
+
+
+def test_no_angle_outside_the_period_needs_examining():
+    """The grid repeats, so the search space is the placement period and not
+    the circle: 90 degrees for square cells, 180 when a quarter turn swaps the
+    cell's sides into a genuinely different tiling."""
+    assert packer(small_room(), cw=3.0, ch=3.0).rotation_period == 90.0
+    assert packer(small_room(), cw=2.0, ch=3.0).rotation_period == 180.0
+
+
+def test_a_budget_below_one_node_is_refused():
+    with pytest.raises(ValueError):
+        packer(small_room()).certify_rotation(max_nodes=0)

@@ -28,6 +28,7 @@ Requires: shapely, matplotlib, numpy
 
 from __future__ import annotations
 
+import heapq
 import math
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -264,9 +265,22 @@ RECOVERABLE_FRACTION_MIN = 0.5
 #: that makes the argument, since under one cell of reclaimable area there is
 #: not enough on the table to complete even one more cell. The stop costs one
 #: classifying evaluation and saves `REFINE_PROBES` exact translation solves --
-#: 105 evaluations against 905 on the tilted room, for the same count. Set to 0
+#: 5 evaluations against 12 on the tilted room, for the same count. Set to 0
 #: to run the note's un-gated pipeline (an ablation axis of section 11).
 RECOVERABLE_AREA_MIN = 1.0
+
+#: Angular windows `certify_rotation` may examine before giving up on closing
+#: the space. Not a resolution: the search is exact and this is only a budget,
+#: so hitting it makes the certificate report `exhausted=False` rather than
+#: silently returning a coarser answer.
+#:
+#: The tree's shape sets the scale. Pruning cannot begin until a window is worth
+#: less slack than roughly one cell of extra boundary coverage, which for a room
+#: of radius R with perimeter L and cell area A needs a half-window of about
+#: A / (L * R) radians; below that the incumbent starts winning and whole
+#: subtrees die at once. 600 leaves room for the shapes in the corpus and stops
+#: a pathological instance from running unboundedly.
+MAX_CERTIFY_NODES = 600
 
 #: Which local refine to run: "none", "grid" or "golden".
 #:
@@ -562,6 +576,49 @@ class Certificate:
         return (f"Certificate(partial={self.partial}, floor={self.floor}, "
                 f"gap={self.gap}, irreducible={self.irreducible}, "
                 f"certified={self.certified})")
+
+
+@dataclass(frozen=True)
+class RotationCertificate:
+    """What `certify_rotation` proved, and whether it finished proving it.
+
+    The existing `Certificate` bounds the PARTIAL count from below, using a
+    covering argument that does not always apply and says so when it does not.
+    This one bounds the COMPLETE count from above, over every angle, and its
+    argument applies to any shape -- so where the two overlap they are
+    independent statements about the same placement, and this one never has to
+    decline.
+
+    complete  : cells the returned placement holds.
+    bound     : the most any placement of this grid on this region could hold,
+                at any angle. Equal to `complete` when the search closed.
+    nodes     : angular windows examined; the cost measure for this search.
+    exhausted : True when the search ruled out the whole period rather than
+                stopping at its node budget. A search that stopped early still
+                holds a valid `bound` -- it simply has not closed the gap, and
+                `optimal` stays False rather than quoting the incumbent.
+    """
+
+    complete: int
+    bound: int
+    nodes: int
+    exhausted: bool
+
+    @property
+    def gap(self) -> int:
+        """Cells between what was achieved and what could exist. 0 with
+        `exhausted` is a proof of global optimality."""
+        return self.bound - self.complete
+
+    @property
+    def optimal(self) -> bool:
+        """No placement of this grid on this region does better, at any angle."""
+        return self.exhausted and self.gap == 0
+
+    def __repr__(self) -> str:                     # pragma: no cover - display
+        return (f"RotationCertificate(complete={self.complete}, "
+                f"bound={self.bound}, nodes={self.nodes}, "
+                f"optimal={self.optimal})")
 
 
 @dataclass
@@ -2060,6 +2117,120 @@ class GridPacker:
         tiles = _fold_tiles(_erode_by_cell(work, self.cw, self.ch),
                             self.cw, self.ch)
         return _ranked_offsets(tiles, self.cw, self.ch)[0][0]
+
+    def certify_rotation(
+        self,
+        *,
+        partial_penalty: float = 0.0,
+        max_nodes: int = MAX_CERTIFY_NODES,
+        seed: Optional[Placement] = None,
+    ) -> Tuple[Placement, RotationCertificate]:
+        """Optimality over ANGLES, not merely within one -- by branch and bound.
+
+        `optimize_erosion` settles translation at a given angle. The angle
+        itself comes from a vote, and a vote is evidence rather than proof, so
+        this closes the last gap: it returns a placement together with a bound
+        no placement at ANY angle can beat, and says whether the two met.
+
+        The search is interval branch and bound over the placement period.
+        `rotation_bound` bounds a whole angular window, so a window whose bound
+        cannot beat the incumbent is discarded whole -- with no idea where
+        inside it the count jumps, which is what makes this tractable when
+        enumerating those jumps is not. Windows are taken best-bound-first, so
+        the moment the best remaining bound fails to beat the incumbent, every
+        remaining window fails too and the space is closed.
+
+        TWO THINGS MAKE IT TERMINATE, and neither is a step size:
+
+          * the vote seeds it. An optimum usually sits at a wall-flush angle,
+            attained at one exact angle that bisection approaches and never
+            lands on -- so the incumbent would keep losing to a bound it could
+            never match. `optimize_guided` names those angles already, which
+            makes the vote the incumbent generator and this the proof, a better
+            division of labour than asking the vote to be right;
+          * splitting stops once the window is worth less than `_GEOM_TOL` of
+            geometry. Below that the fattening is inside the tolerance every
+            other containment test here already grants, so the bound IS the
+            value at the centre and the window resolves rather than splitting
+            forever.
+
+        Cost is the honest objection: every node is two erosion solves on a
+        fattened region, and the bound is weak while a window is worth more
+        slack than a cell. Measured, it prunes better than that suggests,
+        because the vote's seed is usually already optimal and only has to be
+        confirmed: 15 nodes and 50 seconds to prove 108 on the 36x27 room at
+        23 degrees, 3 nodes on a 12x9 one. A curved boundary is the hard case --
+        the count barely varies with angle, so nothing prunes on quality and the
+        splitting runs to the tolerance: 127 nodes for a disc. Still opt-in, and
+        still not the request path. `max_nodes` caps it, and a search that hits
+        the cap reports `exhausted=False` and declines to claim optimality
+        rather than quoting the incumbent as proven.
+
+        Returns (best_placement, RotationCertificate).
+        """
+        if max_nodes < 1:
+            raise ValueError("max_nodes must be at least 1")
+
+        if seed is None:
+            seed, _ = self.optimize_guided(partial_penalty=partial_penalty)
+        best = seed
+
+        period = self.rotation_period
+        radius = self._turning_circle[1]
+
+        def worth_splitting(half_window: float) -> bool:
+            return radius * math.radians(half_window) > _GEOM_TOL
+
+        # Max-heap by bound (negated), tie-broken by window centre so the walk
+        # is deterministic. One window to start: the whole period.
+        root = (period / 2.0, period / 2.0)
+        queue = [(-self.rotation_bound(*root), root[0], root[1])]
+
+        nodes = 0
+        exhausted = False
+        bound = -(queue[0][0])
+        while queue:
+            neg_bound, centre, half_window = heapq.heappop(queue)
+            window_bound = -neg_bound
+            if window_bound <= best.complete:
+                # Best-bound-first: nothing still queued bounds any higher, so
+                # no unexamined angle can beat the incumbent. The space is shut.
+                exhausted = True
+                bound = best.complete
+                break
+            if nodes >= max_nodes:
+                # Out of budget. This window's bound is the largest left, so it
+                # is the honest bound over everything not yet ruled out.
+                bound = window_bound
+                break
+
+            nodes += 1
+            candidate, _ = self.optimize_erosion(
+                angles=(centre % period,), partial_penalty=partial_penalty)
+            if _objective(candidate, partial_penalty) > \
+                    _objective(best, partial_penalty):
+                best = candidate
+
+            if worth_splitting(half_window):
+                half = half_window / 2.0
+                for child in (centre - half, centre + half):
+                    child_bound = self.rotation_bound(child % period, half)
+                    if child_bound > best.complete:
+                        heapq.heappush(queue, (-child_bound, child, half))
+            bound = max(best.complete, window_bound if queue else best.complete)
+        else:
+            # Queue drained: every window was either split into children that
+            # could not beat the incumbent, or resolved at the tolerance.
+            exhausted = True
+            bound = best.complete
+
+        certificate = RotationCertificate(
+            complete=best.complete,
+            bound=max(bound, best.complete),
+            nodes=nodes,
+            exhausted=exhausted,
+        )
+        return best, certificate
 
     # ------------------------------------------------------------------ #
     # Method 2: rotation read off the partial-cell pattern (design note 8)
