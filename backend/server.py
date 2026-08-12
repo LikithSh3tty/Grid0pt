@@ -36,13 +36,17 @@ class PolygonRequest(BaseModel):
     cell_width: float
     cell_height: float
     rotate: bool = False
+    #: Prove the angle rather than vote for it. Adds the rotation_* statistics
+    #: and costs tens of seconds, so it defaults off; see packer_service._solve.
+    certify: bool = False
 
 
 @app.post("/api/pack/polygon")
 def pack_polygon(req: PolygonRequest):
     try:
         return run_packing(
-            req.shape, req.obstacles, req.cell_width, req.cell_height, req.rotate,
+            req.shape, req.obstacles, req.cell_width, req.cell_height,
+            req.rotate, req.certify,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -54,10 +58,12 @@ async def pack_image(
     cell_width: float = Form(...),
     cell_height: float = Form(...),
     rotate: bool = Form(False),
+    certify: bool = Form(False),
 ):
     image_bytes = await file.read()
     try:
-        return run_packing_from_image(image_bytes, cell_width, cell_height, rotate)
+        return run_packing_from_image(image_bytes, cell_width, cell_height,
+                                      rotate, certify)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

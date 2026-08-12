@@ -44,7 +44,7 @@ def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
     return tuple(range(0, period, ROTATE_STEP))
 
 
-def _solve(packer: GridPacker, rotate: bool):
+def _solve(packer: GridPacker, rotate: bool, certify: bool = False):
     """Place the grid, and read back what the placement certifies.
 
     Translation is solved either way rather than sampled, and on BOTH axes: the
@@ -55,25 +55,41 @@ def _solve(packer: GridPacker, rotate: bool):
     comes from the partial-cell fringe's own orientation vote rather than a
     fixed 15 degree ladder.
 
-    Returns (best, certificate). The best placement is re-evaluated once with
-    the taxonomy on so the certificate and the vote diagnostics can be read off
-    it; the search itself never pays for classification.
+    `certify` turns the vote's answer into a proof: branch and bound over the
+    angle establishes that no placement at ANY angle does better, or reports the
+    gap it could not close. It is off by default because proving the angle costs
+    orders of magnitude more than finding it -- tens of seconds against under
+    one -- and most callers want a placement rather than a theorem. It only
+    applies with `rotate`; without it there is no angle in question, and
+    translation is already exact.
+
+    Returns (best, certificate, rotation_certificate). The best placement is
+    re-evaluated once with the taxonomy on so the certificate and the vote
+    diagnostics can be read off it; the search itself never pays for
+    classification.
     """
-    if rotate:
+    rotation_certificate = None
+    if rotate and certify:
+        # The guided pipeline runs inside this, as the incumbent the proof is
+        # built around -- so certifying cannot return a worse placement than
+        # not certifying, only the same one with a proof attached.
+        best, rotation_certificate = packer.certify_rotation()
+    elif rotate:
         best, _ = packer.optimize_guided()
     else:
         best, _ = packer.optimize_erosion()
 
     classified = packer.evaluate(best.dx, best.dy, best.angle, classify=True)
     classified.rotation_vote = best.rotation_vote
-    return classified, packer.certificate(classified)
+    return classified, packer.certificate(classified), rotation_certificate
 
 
 def _polygon_coords(poly: Polygon) -> List[Point]:
     return [(float(x), float(y)) for x, y in poly.exterior.coords[:-1]]
 
 
-def _placement_to_result(packer: GridPacker, best, certificate=None) -> dict:
+def _placement_to_result(packer: GridPacker, best, certificate=None,
+                         rotation_certificate=None) -> dict:
     """Serialise a placement for the API.
 
     The response SHAPE is unchanged -- same keys, same geometry -- and the new
@@ -109,6 +125,17 @@ def _placement_to_result(packer: GridPacker, best, certificate=None) -> dict:
         stats["certified"] = certificate.certified
         stats["recoverable_area"] = certificate.recoverable_area
 
+    if rotation_certificate is not None:
+        # The strongest statement the solver can make: not "the best this
+        # found" but "nothing at any angle does better". Absent rather than
+        # false when the proof was not requested -- a client that did not ask
+        # for it should not be handed a claim it cannot interpret.
+        stats["rotation_bound"] = rotation_certificate.bound
+        stats["rotation_gap"] = rotation_certificate.gap
+        stats["rotation_optimal"] = rotation_certificate.optimal
+        stats["rotation_exhausted"] = rotation_certificate.exhausted
+        stats["rotation_nodes"] = rotation_certificate.nodes
+
     return {
         "shape": _polygon_coords(packer.shape),
         "obstacles": [_polygon_coords(o) for o in packer.obstacles],
@@ -135,6 +162,7 @@ def run_packing(
     cell_width: float,
     cell_height: float,
     rotate: bool,
+    certify: bool = False,
 ) -> dict:
     """Pack a manually specified polygon. Raises ValueError on bad input."""
     if cell_width <= 0 or cell_height <= 0:
@@ -144,8 +172,8 @@ def run_packing(
     obstacles = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
 
     packer = GridPacker(shape, obstacles, cell_width=cell_width, cell_height=cell_height)
-    best, certificate = _solve(packer, rotate)
-    return _placement_to_result(packer, best, certificate)
+    best, certificate, rotation = _solve(packer, rotate, certify)
+    return _placement_to_result(packer, best, certificate, rotation)
 
 
 def run_packing_from_image(
@@ -153,6 +181,7 @@ def run_packing_from_image(
     cell_width: float,
     cell_height: float,
     rotate: bool,
+    certify: bool = False,
 ) -> dict:
     """Pack the boundary detected in raw image bytes. Raises ValueError on bad input."""
     if cell_width <= 0 or cell_height <= 0:
@@ -164,5 +193,5 @@ def run_packing_from_image(
         raise ValueError("could not read image: unsupported or corrupt file")
 
     packer = GridPacker.from_image(img, cell_width=cell_width, cell_height=cell_height)
-    best, certificate = _solve(packer, rotate)
-    return _placement_to_result(packer, best, certificate)
+    best, certificate, rotation = _solve(packer, rotate, certify)
+    return _placement_to_result(packer, best, certificate, rotation)

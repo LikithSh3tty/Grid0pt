@@ -230,3 +230,65 @@ def test_no_angle_outside_the_period_needs_examining():
 def test_a_budget_below_one_node_is_refused():
     with pytest.raises(ValueError):
         packer(small_room()).certify_rotation(max_nodes=0)
+
+
+# --------------------------------------------------------------------------- #
+# what a caller sees
+# --------------------------------------------------------------------------- #
+
+def coords(poly: Polygon):
+    return [(float(x), float(y)) for x, y in poly.exterior.coords[:-1]]
+
+
+def test_the_service_does_not_certify_unless_asked():
+    """Proving the angle costs orders more than finding it, so a plain request
+    must not start paying for it. Absent keys, not false ones: a client that
+    did not ask cannot be handed a claim it has no way to interpret."""
+    from packer_service import run_packing
+
+    stats = run_packing(coords(small_room(tilt=23.0)), [], 3.0, 3.0,
+                        rotate=True)["stats"]
+
+    assert "rotation_bound" not in stats
+    assert "rotation_optimal" not in stats
+
+
+def test_the_service_reports_a_proven_optimum_when_asked():
+    """The claim the whole certificate exists to let the API make: not
+    'the best this found', but 'no placement of this grid on this region does
+    better, at any angle'."""
+    from packer_service import run_packing
+
+    result = run_packing(coords(small_room(tilt=23.0)), [], 3.0, 3.0,
+                         rotate=True, certify=True)
+
+    assert result["stats"]["complete"] == 12
+    assert result["stats"]["rotation_bound"] == 12
+    assert result["stats"]["rotation_optimal"] is True
+    assert result["stats"]["rotation_gap"] == 0
+
+
+def test_certifying_cannot_return_a_worse_placement_than_not_certifying():
+    from packer_service import run_packing
+
+    plain = run_packing(coords(small_room(tilt=23.0)), [], 3.0, 3.0, rotate=True)
+    certified = run_packing(coords(small_room(tilt=23.0)), [], 3.0, 3.0,
+                            rotate=True, certify=True)
+
+    assert certified["stats"]["complete"] >= plain["stats"]["complete"]
+
+
+def test_the_endpoint_accepts_the_flag_and_defaults_it_off():
+    from fastapi.testclient import TestClient
+    from server import app
+
+    client = TestClient(app)
+    body = {"shape": coords(small_room(tilt=23.0)),
+            "cell_width": 3.0, "cell_height": 3.0, "rotate": True}
+
+    plain = client.post("/api/pack/polygon", json=body).json()
+    certified = client.post("/api/pack/polygon",
+                            json={**body, "certify": True}).json()
+
+    assert "rotation_optimal" not in plain["stats"]
+    assert certified["stats"]["rotation_optimal"] is True
