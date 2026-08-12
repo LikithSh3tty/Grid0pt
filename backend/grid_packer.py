@@ -99,6 +99,25 @@ _AREA_TOL_REL = 1e-12
 
 
 # --------------------------------------------------------------------------- #
+# buffer resolution -- and the correction that makes a buffered bound a bound
+# --------------------------------------------------------------------------- #
+# Shapely approximates a round buffer with `quad_segs` segments per quarter
+# circle, placing its vertices ON the offset circle and its edges INSIDE it. The
+# result is therefore inscribed: it is up to cos(pi / (4 * quad_segs)) short of
+# the true offset at the middle of each edge.
+#
+# That is harmless when a buffer is a tolerance and fatal when it is a bound.
+# `rotation_bound` grows a region to cover every angle in a window; growing it
+# by slightly LESS than required would let a placement at some angle in the
+# window escape the bound, and the certificate built on it would certify a
+# result that is not optimal. Dividing the distance by the ratio below pushes
+# the inscribed polygon back outside the circle it approximates, which costs
+# 0.12% of slack at 16 segments and buys an inequality that actually holds.
+_BUFFER_QUAD_SEGS = 16
+_BUFFER_INSCRIBED_RATIO = math.cos(math.pi / (4 * _BUFFER_QUAD_SEGS))
+
+
+# --------------------------------------------------------------------------- #
 # taxonomy resolution -- the ONE quantity the existing constants cannot supply
 # --------------------------------------------------------------------------- #
 # The partial-cell taxonomy separates class F ("grazing sliver", f ~ 0, the cell
@@ -1349,6 +1368,8 @@ class GridPacker:
 
         # pivot used for any rotation so results are reproducible
         self._pivot = self.shape.centroid
+        #: Minimum bounding circle, computed on demand -- see `_turning_circle`.
+        self._circle: Optional[Tuple[Point, float]] = None
 
         #: How many times `evaluate` has run on this packer. `evaluate` is the
         #: unit of work every search here is built from, so counting it is the
@@ -1970,6 +1991,75 @@ class GridPacker:
 
         results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
+
+    @property
+    def _turning_circle(self) -> Tuple[Point, float]:
+        """The centre and radius that make an angular window cost least.
+
+        Rotating by theta moves a point at radius r from the pivot by exactly
+        r * theta, so the largest radius in the region is what an angular window
+        costs in geometric slack -- and the smallest such radius is the
+        MINIMUM BOUNDING CIRCLE's. Its centre is used rather than `_pivot`
+        (the shape's centroid) because that halves the slack on a long room, and
+        halving the slack is what decides how deep `certify_rotation` has to
+        split.
+
+        Reading it about a different centre than `evaluate` rotates about is
+        sound, and only because translation is solved: rotating about another
+        point differs by a translation, and the quantity being bounded is the
+        maximum OVER translations, which that shift cannot change.
+        """
+        if self._circle is None:
+            circle = shapely.minimum_bounding_circle(self.usable)
+            self._circle = (circle.centroid,
+                            float(shapely.minimum_bounding_radius(self.usable)))
+        return self._circle
+
+    def rotation_bound(self, angle: float, half_window: float) -> int:
+        """Upper bound on the complete count at EVERY angle near `angle`.
+
+        The certificate's whole content, and the reason it does not need the
+        angles at which the count jumps. Let M(theta) be the most complete cells
+        any placement at theta can hold -- what `optimize_erosion` returns. Every
+        theta within `half_window` of `angle` sees the region turned by at most
+        that much, and turning moves a point at radius r by r * theta, so
+
+            R(theta)  is inside  R(angle) grown by  radius * half_window
+
+        for every theta in the window. Erosion is monotone in the region, so the
+        folded overlap depth of the GROWN region covers every placement any of
+        those angles admits:
+
+            max over the window of M(theta)  <=  this bound.
+
+        No new geometry: it is `_erode_by_cell`, `_fold_tiles` and
+        `_ranked_offsets` run once on a slightly fattened region.
+
+        The growth is inflated by 1/cos(pi/(4*_BUFFER_QUAD_SEGS)) because
+        Shapely's round buffer is a polygon INSCRIBED in the true offset -- its
+        vertices sit at the right distance and its edges cut the corner. An
+        inscribed approximation of a bound is not a bound, and the correction is
+        the ratio that pushes the inscribed polygon back outside the circle it
+        approximates.
+
+        `half_window` is in degrees, like every other angle here. Zero is
+        allowed and makes this exactly `optimize_erosion` at that angle -- which
+        is what lets a search built on it terminate rather than only converge.
+        """
+        if half_window < 0:
+            raise ValueError("half_window must not be negative")
+
+        centre, radius = self._turning_circle
+        work = rotate(self.usable, -angle, origin=centre) if angle else self.usable
+
+        slack = radius * math.radians(half_window)
+        if slack > 0:
+            work = work.buffer(slack / _BUFFER_INSCRIBED_RATIO,
+                               quad_segs=_BUFFER_QUAD_SEGS)
+
+        tiles = _fold_tiles(_erode_by_cell(work, self.cw, self.ch),
+                            self.cw, self.ch)
+        return _ranked_offsets(tiles, self.cw, self.ch)[0][0]
 
     # ------------------------------------------------------------------ #
     # Method 2: rotation read off the partial-cell pattern (design note 8)
