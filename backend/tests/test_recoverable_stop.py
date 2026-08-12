@@ -133,6 +133,11 @@ def test_the_refine_is_skipped_once_the_fringe_is_flush(tilt):
 
     Asserted as a cost RATIO rather than an absolute count so the test measures
     the stop and not the size of the instance.
+
+    The ratio the stop earns fell once translation stopped being enumerated: a
+    solve is one evaluation per angle now, so the eight probes it declines to
+    spend are eight evaluations rather than eight sweeps. The saving is smaller
+    in relative terms precisely because the thing being saved got cheap.
     """
     packer = packer_for(room(tilt=tilt))
 
@@ -140,7 +145,7 @@ def test_the_refine_is_skipped_once_the_fringe_is_flush(tilt):
     spent, _ = packer.optimize_guided(recover_min=0.0)
 
     assert stopped.complete == spent.complete
-    assert stopped.rotation_vote.evaluations < spent.rotation_vote.evaluations / 4
+    assert stopped.rotation_vote.evaluations < spent.rotation_vote.evaluations / 2
 
 
 def test_the_stop_stays_quiet_while_upside_remains():

@@ -154,10 +154,15 @@ def test_guided_costs_far_less_than_the_scan_it_replaces():
 
     The cost split is pinned deliberately, because it is the honest version of
     this claim: the vote itself is what is cheap. Naming the angle and solving
-    translation there takes ~110 evaluations against the ladder's 1800, a 16x
-    saving. Turning the local refine on multiplies that by roughly eight, since
-    each probe is a full exact-translation solve, and it still comes in under
-    the ladder. Which side of that trade to take is the ablation of
+    translation there takes a handful of evaluations against the ladder's 1800.
+
+    That handful used to be ~110, and shrinking it is what solving translation
+    on both axes bought: a solve is now ONE evaluation per angle rather than one
+    per critical offset, so the un-refined pipeline costs the base solve, the
+    classifying re-evaluate, and one per candidate angle. The refine still
+    dominates -- eight probes, each a full solve -- but it now multiplies the
+    total by about three rather than by eight, because the thing it multiplies
+    got so much cheaper. Which side of that trade to take is the ablation of
     `REFINE_METHOD`, and it should be reported rather than buried.
 
     On THIS instance the trade does not even arise: the vote's angle leaves the
@@ -183,7 +188,7 @@ def test_guided_costs_far_less_than_the_scan_it_replaces():
     assert unrefined.rotation_vote.evaluations < len(scan_batch) / 10
     assert refined.rotation_vote.evaluations < len(scan_batch)
     # The refine, not the vote, is where a guided solve spends its budget...
-    assert refined.rotation_vote.evaluations > 4 * unrefined.rotation_vote.evaluations
+    assert refined.rotation_vote.evaluations > 2 * unrefined.rotation_vote.evaluations
     # ...which is exactly why the default does not spend it here.
     assert (default.rotation_vote.evaluations
             == unrefined.rotation_vote.evaluations + 1)
@@ -398,16 +403,17 @@ def test_the_refine_recovers_the_optimum_on_a_two_family_shape():
     assert unrefined.complete == 5
     assert refined.complete == 6
 
-    # Note WHERE it got there: not by polishing a candidate onto the 30-33
-    # plateau, but by finding an equally good placement a few degrees off the
-    # wall-aligned candidate at 0. The refine is not a wall-alignment step; it
-    # explores the neighbourhood the vote could not name. WHICH point of that
-    # neighbourhood it lands on is not a property worth pinning -- the plateau
-    # holds several, and solving the dy axis rather than enumerating it moved
-    # the winner from 1.9 to 4.4 degrees without changing the count -- so what
-    # is asserted is that it stayed inside the refine window and off the
-    # plateau the candidates already offered.
-    assert 0.0 < refined.angle <= REFINE_HALF_WINDOW
+    # Note WHERE it got there, because that has changed as translation got
+    # exact. While the offsets were enumerated, the leader going into the refine
+    # was the UN-rotated base and the refine found its 6 a few degrees off it,
+    # nowhere near a wall -- the wall-aligned candidate at 35 degrees could not
+    # be scored properly, so it did not lead. With both axes solved the vote's
+    # 35 degrees leads on its own merits, and the refine does what the note
+    # describes: it walks that candidate down its own window onto the 30-33
+    # plateau. So the refine is pinned as a neighbourhood search around the
+    # leader, and as the step that reaches the plateau.
+    assert abs(refined.angle - unrefined.angle) <= REFINE_HALF_WINDOW
+    assert 30.0 <= refined.angle <= 33.0
 
 
 def test_golden_section_does_not_beat_uniform_sampling():

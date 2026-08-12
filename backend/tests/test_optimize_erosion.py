@@ -314,6 +314,62 @@ def test_the_cost_does_not_grow_with_the_boundary_complexity():
     assert pk.evaluations == 1
 
 
+# --------------------------------------------------------------------------- #
+# wired in: this is what the pipeline, the service and the table now solve with
+# --------------------------------------------------------------------------- #
+
+def proven_bound(shape, cw=3.0, ch=3.0) -> int:
+    pk = packer(shape, cw=cw, ch=ch)
+    tiles = _fold_tiles(_erode_by_cell(pk.usable, cw, ch), cw, ch)
+    return _ranked_offsets(tiles, cw, ch)[0][0]
+
+
+def test_the_guided_pipeline_solves_translation_this_way_by_default():
+    """An `r_min` above 1 shuts the rotation gate, so what comes back is the
+    translation solve at theta = 0 and nothing else -- which is exactly the
+    default being asserted."""
+    base, _ = packer(DX_GAP_SHAPE).optimize_guided(r_min=1.1)
+
+    assert base.complete == proven_bound(DX_GAP_SHAPE)
+
+
+def test_the_older_translation_solvers_are_still_reachable():
+    """They are ablations of the results table, so the switch has to keep
+    working -- and has to still be worse, or the ablation measures nothing."""
+    eroded, _ = packer(DX_GAP_SHAPE).optimize_guided(r_min=1.1)
+    columns, _ = packer(DX_GAP_SHAPE).optimize_guided(r_min=1.1,
+                                                      translation="columns")
+
+    assert columns.complete < eroded.complete
+
+
+def test_an_unknown_translation_solver_is_refused():
+    with pytest.raises(ValueError):
+        packer(room()).optimize_guided(translation="nonsense")
+
+
+def test_the_service_serves_the_placement_the_solver_proves():
+    """The gap is not an internal detail -- an unrotated request for this shape
+    used to come back a cell short of what the grid can do on it."""
+    from packer_service import run_packing
+
+    result = run_packing(list(DX_GAP_SHAPE.exterior.coords)[:-1], [],
+                         cell_width=3.0, cell_height=3.0, rotate=False)
+
+    assert result["stats"]["complete"] == proven_bound(DX_GAP_SHAPE)
+
+
+def test_the_results_table_measures_the_solver_and_what_it_replaced():
+    """Both have to be in the registry: the method as the default, and the
+    previous default as the ablation that attributes the difference to it."""
+    from evaluation import methods as methods_module
+
+    names = {m.name for m in methods_module.build()}
+
+    assert "erosion" in names
+    assert "abl-columns" in names
+
+
 def test_it_rejects_an_empty_angle_list():
     with pytest.raises(ValueError):
         packer(room()).optimize_erosion(angles=())

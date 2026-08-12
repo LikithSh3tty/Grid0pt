@@ -75,6 +75,11 @@ def _columns(packer: GridPacker) -> Placement:
     return best
 
 
+def _erosion(packer: GridPacker) -> Placement:
+    best, _ = packer.optimize_erosion(angles=(0.0,))
+    return best
+
+
 def _guided(**kwargs) -> Callable[[GridPacker], Placement]:
     def run(packer: GridPacker) -> Placement:
         best, _ = packer.optimize_guided(**kwargs)
@@ -134,6 +139,9 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
         "columns", "grid0pt", _columns,
         "translation with the dy axis solved rather than enumerated, no rotation"))
     methods.append(Method(
+        "erosion", "grid0pt", _erosion,
+        "translation with BOTH axes solved: exact on any boundary, no rotation"))
+    methods.append(Method(
         "guided", "grid0pt", _guided(),
         "the full pipeline: exact translation, fringe vote, refine, area stop"))
 
@@ -144,8 +152,10 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
                "the note's golden-section refine instead of uniform probes"),
         Method("abl-nostop", "ablation", _guided(recover_min=0.0),
                "no recoverable-area stop: always spend the refine budget"),
+        Method("abl-columns", "ablation", _guided(translation="columns"),
+               "solve the dy axis but enumerate dx: exact only where the boundary is"),
         Method("abl-enumerate", "ablation", _guided(translation="exact"),
-               "enumerate the offset arrangement instead of solving the dy axis"),
+               "enumerate the offset arrangement on both axes instead of solving them"),
         Method("abl-nogate", "ablation", _guided(r_min=0.0),
                "no R gate: rotate even when the fringe has no dominant direction"),
         Method("abl-weight0", "ablation", _guided(weight_power=0.0),
