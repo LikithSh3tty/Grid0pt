@@ -61,6 +61,20 @@ export default function ImageInput({ onFileSelected, onObstaclesChange }) {
     onObstaclesChange?.(next);
   }
 
+  // Both of these exist because the only remedies used to be destructive:
+  // close a shape you did not want, or clear everything and start again. A
+  // mis-click is the ordinary case when placing corners by eye, so taking one
+  // back should not cost the rest of the work.
+  function undoPoint() {
+    setCurrent((points) => points.slice(0, -1));
+  }
+
+  function removeLastRing() {
+    const next = rings.slice(0, -1);
+    setRings(next);
+    onObstaclesChange?.(next);
+  }
+
   const display = (point) => {
     const img = imgRef.current;
     if (!img) return { cx: 0, cy: 0 };
@@ -120,6 +134,12 @@ export default function ImageInput({ onFileSelected, onObstaclesChange }) {
           </button>
           <button type="button" onClick={closeRing} disabled={current.length < 3}>
             Close obstacle
+          </button>
+          <button type="button" onClick={undoPoint} disabled={!current.length}>
+            Undo point
+          </button>
+          <button type="button" onClick={removeLastRing} disabled={!rings.length}>
+            Remove last
           </button>
           <button type="button" onClick={reset}
                   disabled={!rings.length && !current.length}>
