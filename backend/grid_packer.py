@@ -2622,6 +2622,8 @@ class GridPacker:
         partial_penalty: float = 0.0,
         max_nodes: int = MAX_CERTIFY_NODES,
         seed: Optional[Placement] = None,
+        centre: Optional[float] = None,
+        half_window: Optional[float] = None,
     ) -> Tuple[Placement, RotationCertificate]:
         """Optimality over ANGLES, not merely within one -- by branch and bound.
 
@@ -2684,7 +2686,17 @@ class GridPacker:
 
         # Max-heap by bound (negated), tie-broken by window centre so the walk
         # is deterministic. One window to start: the whole period.
-        root = (search / 2.0, search / 2.0)
+        # A window rather than the whole period when one is given. The proof is
+        # then local -- optimal WITHIN the window -- which is what a refine
+        # wants: the vote has already named the neighbourhood, and searching
+        # 180 degrees to polish 0.03 of one is most of the cost for none of the
+        # answer.
+        if half_window is None:
+            root = (search / 2.0, search / 2.0)
+        else:
+            if half_window <= 0:
+                raise ValueError("half_window must be positive")
+            root = (float(centre or 0.0), float(half_window))
         queue = [(-self.rotation_bound(*root), root[0], root[1])]
 
         nodes = 0
@@ -2898,7 +2910,12 @@ class GridPacker:
                          has no dominant direction and the base is returned
                          unrotated, without spending a candidate solve.
         refine         : local refine, see `REFINE_METHOD` -- "grid" (default),
-                         "golden" (the note's prescription) or "none".
+                         "golden" (the note's prescription), "none", or
+                         "certified", which replaces probing with branch and
+                         bound over the same window and is exact within it. The
+                         last is off by default because it costs seconds rather
+                         than milliseconds; it is what to reach for when the
+                         objective is knife-edge near the voted angle.
         refine_probes  : solves the refine may spend; shared budget, whichever
                          method is chosen, so the two are comparable.
         recover_min    : section 8.4's stop, in cell areas -- skip the refine
@@ -2916,7 +2933,7 @@ class GridPacker:
                          other two are kept reachable because the difference
                          between them is an ablation of section 11.
         """
-        if refine not in ("none", "grid", "golden"):
+        if refine not in ("none", "grid", "golden", "certified"):
             raise ValueError(f"unknown refine method: {refine!r}")
         if translation not in ("erosion", "columns", "exact"):
             raise ValueError(f"unknown translation solver: {translation!r}")
@@ -3018,7 +3035,35 @@ class GridPacker:
                 worth_it = (self._recoverable_area(classified)
                             >= recover_min * self.cw * self.ch)
 
-            if worth_it and refine == "golden":
+            # The stop does not gate this one, and the reason is a finding
+            # rather than an exemption. It declines when the leading fringe
+            # holds under a cell of reclaimable area, arguing that no probe can
+            # then complete another cell -- but that reasons about THIS
+            # placement's fringe as though a nearby angle merely perturbs it. A
+            # small turn produces a different fringe entirely. On the traced
+            # tilted L at 2x3 the leader has 0.046 cells of reclaimable area, so
+            # the stop declines, and an angle 0.03 degrees away holds one more
+            # cell. An exact refine is exactly the tool for that case, so it
+            # runs regardless.
+            if refine == "certified":
+                # Exact rather than sampled. The probes below are spaced
+                # `refine_half_window / probes` apart, which on a knife-edge
+                # objective is not fine enough to matter -- the traced tilted L
+                # at 2x3 cells has its optimum 0.03 degrees from the voted
+                # angle, against probes 1.25 degrees apart. Branch and bound
+                # over the same window resolves it, and is affordable precisely
+                # because the vote already narrowed the window: 9 windows here
+                # against the 49 a whole-period proof takes.
+                leader_placement = max(
+                    results, key=lambda p: _objective(p, partial_penalty))
+                proved, _ = self.certify_rotation(
+                    partial_penalty=partial_penalty,
+                    seed=leader_placement,
+                    centre=centre,
+                    half_window=refine_half_window,
+                )
+                results.append(proved)
+            elif worth_it and refine == "golden":
                 self._golden_refine(centre, refine_half_window, refine_probes,
                                     solve, partial_penalty)
             elif worth_it:

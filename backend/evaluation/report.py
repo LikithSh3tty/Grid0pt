@@ -945,6 +945,41 @@ def build(out_path: Path) -> Path:
             "complete-cell solver.",
             s["body"]),
 
+        para("F17. The refine cannot resolve what the vote misses, and the "
+             "stop declines to try", s["finding"]),
+        para(
+            "One instance in the corpus still fell short of its proven optimum: "
+            "the traced tilted L at 2×3 cells, 82 against 83. The vote is not "
+            "the problem. It names 22.865 degrees and the optimum sits at "
+            "22.835 — right to within three hundredths of a degree. The grid "
+            "refine probes a 5-degree window in 8 steps, so its probes are 1.25 "
+            "degrees apart and could not resolve that at any probe budget worth "
+            "spending. Probing harder is the answer this work rejects "
+            "everywhere else.",
+            s["body"]),
+        para(
+            "Two things had to change. Branch and bound over the same window is "
+            "exact rather than sampled, and is affordable precisely because the "
+            "vote has already narrowed it: 9 windows against the 49 a "
+            "whole-period proof takes. And the recoverable-area stop of section "
+            "8.4 was declining to refine at all here, which is a second "
+            "correction to that criterion rather than an exemption from it.",
+            s["body"]),
+        code("traced-l23-2x3   leader 82 @ 22.86466\n"
+             "  reclaimable area at the leader   0.046 cells   (stop fires under 1.0)\n"
+             "  grid refine                      82\n"
+             "  exact refine                     83 @ 22.83536   <- proven optimum",
+             s["mono"]),
+        para(
+            "The stop argues that a fringe holding less than a cell of "
+            "reclaimable area cannot yield another complete cell. That reasons "
+            "about THIS placement's fringe as though a nearby angle merely "
+            "perturbs it; a small turn produces a different fringe altogether. "
+            "So the measurement stands — F4 still shows the refine rarely "
+            "earning its cost — but the stop's premise does not, and an exact "
+            "refine runs regardless of it.",
+            s["body"]),
+
         para("F12. The full corpus agrees with the quick one, including where "
              "that was inconvenient", s["finding"]),
         para(

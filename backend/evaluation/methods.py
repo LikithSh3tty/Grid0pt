@@ -150,6 +150,8 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
                "no local refine: candidates only"),
         Method("abl-golden", "ablation", _guided(refine="golden"),
                "the note's golden-section refine instead of uniform probes"),
+        Method("abl-certified", "ablation", _guided(refine="certified"),
+               "refine by branch and bound rather than probing: exact in the window"),
         Method("abl-nostop", "ablation", _guided(recover_min=0.0),
                "no recoverable-area stop: always spend the refine budget"),
         Method("abl-columns", "ablation", _guided(translation="columns"),

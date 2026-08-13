@@ -459,3 +459,44 @@ def test_the_stubborn_disc_closes_inside_the_default_budget():
     assert certificate.optimal
     assert certificate.bound == 45
     assert certificate.nodes < 600
+
+
+# --------------------------------------------------------------------------- #
+# a refine that proves instead of sampling
+# --------------------------------------------------------------------------- #
+
+def test_an_exact_refine_resolves_what_probing_cannot():
+    """The instance the sampled refine cannot reach, and why.
+
+    On the traced tilted L at 2x3 cells the vote names 22.865 degrees and the
+    optimum sits at 22.835 -- it is right to within 0.03 of a degree. The grid
+    refine probes a 5-degree window in 8 steps, so its probes are 1.25 degrees
+    apart and could not resolve that if it tried all day. Probing harder is the
+    answer this project rejects everywhere else.
+
+    Branch and bound over the same window is exact instead, and cheap because
+    the window is small: 9 windows against the 49 a whole-period proof needs.
+    """
+    from evaluation import corpus
+
+    instance = [i for i in corpus.build(quick=False)
+                if i.name == "traced-l23-2x3"][0]
+
+    sampled, _ = instance.packer().optimize_guided(refine="grid")
+    exact, _ = instance.packer().optimize_guided(refine="certified")
+
+    assert sampled.complete == 82
+    assert exact.complete == 83          # the proven optimum
+
+
+def test_the_exact_refine_is_never_worse_than_no_refine():
+    for shape in (room(tilt=23.0), l_shape()):
+        base, _ = packer(shape).optimize_guided(refine="none")
+        refined, _ = packer(shape).optimize_guided(refine="certified")
+
+        assert refined.complete >= base.complete
+
+
+def test_an_unknown_refine_is_still_refused():
+    with pytest.raises(ValueError):
+        packer(room()).optimize_guided(refine="telepathy")
