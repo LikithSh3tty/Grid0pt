@@ -1187,10 +1187,14 @@ def build(out_path: Path) -> Path:
             "Extending the computed floor is the same branch and bound the "
             "complete count already uses: over a window the dilation grows and "
             "the erosion shrinks, which bounds their difference from below.",
-            "<b>And it is not tight.</b> Exact on four of six shapes tried, one "
-            "cell low on the other two, because the tolerance is pushed in the "
-            "safe direction on both sides at once. A floor one below the truth "
-            "is honest and still costs a cell of apparent gap.",
+            "<b>The computed floor is not quite tight on curved boundaries.</b> "
+            "Measured against attainable counts rather than a sweep, it is "
+            "exactly tight on five of seven fixed-angle cases and one cell under "
+            "on two discs. Over all angles even those close, because the value "
+            "is attained at some other angle, so the slack costs nothing to the "
+            "claim that matters and appears only when a single angle is asked "
+            "about. The earlier reading of this — one cell low on two of six — "
+            "compared against a 40-step sweep and was measuring the sweep.",
             "<b>A flat objective is the certificate's worst case, and the "
             "cost is arithmetic rather than a defect.</b> A 48-gon disc of "
             "radius 13 at 3×3 holds 45 cells at every angle, so no window is "
