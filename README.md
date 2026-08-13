@@ -19,6 +19,8 @@ The outline doesn't have to be a rectangle. L-shapes, irregular rooms, anything 
 - **Says how good the answer is.** Every result carries a certificate bounding how far from optimal it could possibly be — and on request, a proof that no placement at *any* angle does better.
 - **Reads shapes from images.** Upload a clean floor plan or a hand-drawn sketch and `image_boundary.py` extracts the outer boundary and interior obstacles automatically: Otsu thresholding, morphological closing to seal gaps in drawn lines, and contour-hierarchy analysis to tell a filled shape from an unfilled outline.
 - **Draw shapes by hand** in the browser, or type in polygon coordinates directly, via the Draw tab's canvas.
+- **Mark obstacles on an uploaded plan.** Tracing finds what the drawing shows as a hole; it cannot find a pillar the survey missed or an area someone has decided to keep clear. Click their corners on the image and the grid avoids them too.
+- **Export the layout** as CSV (cell centres and corners) or DXF (a layered drawing), so it goes straight to a spreadsheet, a placement script, or CAD.
 - **Visualizes the result** (shape, obstacles, complete cells, and partial cells) synced between an image view and a canvas view.
 
 ## How the placement is found
@@ -138,7 +140,9 @@ CSV is a row per cell — kind, centre, four corners — for a spreadsheet or a 
 
 Repeated requests are served from a small cache keyed on the outline, cell size and flags, so exporting something already on screen costs the serialisation only.
 
-**`POST /api/pack/image`** takes a multipart form with an image `file`, plus `cell_width`, `cell_height`, and `rotate` fields. The outer boundary becomes the shape; enclosed interior regions become obstacles.
+**`POST /api/pack/image`** takes a multipart form with an image `file`, plus `cell_width`, `cell_height`, `rotate` and `certify` fields. The outer boundary becomes the shape; enclosed interior regions become obstacles.
+
+An optional `obstacles` field carries areas marked by hand, as a JSON list of rings, added to whatever tracing found. They are given in the same coordinate space the response's `shape` comes back in — image pixels, y up — because the tracer flips the y axis, and a ring passed in image-row order would land mirrored: wrong, and plausibly enough to be believed.
 
 Both return the same shape:
 
@@ -207,4 +211,3 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 - **Tighten the computed floor on curved boundaries.** Re-measured against attainable counts rather than a coarse sweep, it is exactly tight on five of seven fixed-angle cases; the exceptions are both discs, one cell under what any offset at that angle achieves. Over all angles even those close, because the value is attained at a different angle — so the remaining looseness costs nothing to the all-angles claim and only shows up if you ask about one angle in particular.
 - **The one instance that still misses.** `traced-l23-2x3` comes back one cell under its proven 83. The certificate names the placement the vote should have found, so what is missing is an explanation of why the vote does not name that angle — not a way to discover it.
 - **A cheaper certificate for shapes with no dominant wall.** Nothing is wrong with the bound here, but a disc is its worst case and the arithmetic is worth knowing before you wait for one. A 48-gon of radius 13 at 3×3 holds 45 cells at *every* angle, so no window is ever pruned on quality and the search must split until the bound itself falls — which happens only below a half-window of 0.072°, or 0.016 units of slack on a turning radius of 13. That is 627 leaves, so it closes at 1471 windows in 503s, against the default budget of 600 which stops it a cell short. Raise `max_nodes` and it finishes; the useful work would be a bound that tightens faster when the objective is flat, since flatness is exactly when nothing else helps.
-- Let obstacles be drawn directly on top of an uploaded image instead of only detected from it.

@@ -70,3 +70,25 @@ describe("the export controls", () => {
     expect(await screen.findByText(/unknown export format/)).toBeInTheDocument();
   });
 });
+
+describe("marking obstacles on an uploaded plan", () => {
+  test("the image request carries them, as JSON", async () => {
+    global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    const { packImage } = await import("../api");
+    const rings = [[[10, 10], [20, 10], [20, 20]]];
+
+    await packImage(new File(["x"], "plan.png"), 3, 3, false, false, rings);
+
+    const form = global.fetch.mock.calls[0][1].body;
+    expect(JSON.parse(form.get("obstacles"))).toEqual(rings);
+  });
+
+  test("sending none is an empty list, not a missing field", async () => {
+    global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    const { packImage } = await import("../api");
+
+    await packImage(new File(["x"], "plan.png"), 3, 3, false);
+
+    expect(global.fetch.mock.calls[0][1].body.get("obstacles")).toBe("[]");
+  });
+});

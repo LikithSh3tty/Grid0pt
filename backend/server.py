@@ -10,6 +10,7 @@ Then open http://localhost:8000
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Tuple
 
@@ -87,11 +88,27 @@ async def pack_image(
     cell_height: float = Form(...),
     rotate: bool = Form(False),
     certify: bool = Form(False),
+    obstacles: str = Form(""),
 ):
+    """Pack a traced image, plus any obstacles marked on it by hand.
+
+    `obstacles` is JSON -- a list of rings -- because a multipart form has no
+    way to carry nested arrays. Empty means "whatever tracing found", which is
+    what every earlier client sends.
+    """
     image_bytes = await file.read()
     try:
+        drawn = json.loads(obstacles) if obstacles.strip() else []
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400,
+                            detail=f"obstacles must be JSON: {e}")
+    if not isinstance(drawn, list):
+        raise HTTPException(status_code=400,
+                            detail="obstacles must be a list of rings")
+
+    try:
         return run_packing_from_image(image_bytes, cell_width, cell_height,
-                                      rotate, certify)
+                                      rotate, certify, drawn)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

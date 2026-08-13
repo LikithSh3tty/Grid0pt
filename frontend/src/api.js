@@ -25,14 +25,18 @@ export async function packPolygon(shape, obstacles, cellWidth, cellHeight, rotat
   return data;
 }
 
+// `obstacles` are areas marked by hand on the image, in the same coordinate
+// space the response's `shape` comes back in -- y up, image pixels. Sent as
+// JSON because a multipart form cannot carry nested arrays.
 export async function packImage(file, cellWidth, cellHeight, rotate,
-                                certify = false) {
+                                certify = false, obstacles = []) {
   const form = new FormData();
   form.append("file", file);
   form.append("cell_width", String(cellWidth));
   form.append("cell_height", String(cellHeight));
   form.append("rotate", String(rotate));
   form.append("certify", String(certify));
+  form.append("obstacles", JSON.stringify(obstacles));
 
   const res = await fetch(`${API_BASE}/api/pack/image`, {
     method: "POST",

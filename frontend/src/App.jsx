@@ -21,6 +21,8 @@ export default function App() {
   // layout on screen rather than for whatever the controls say now -- the
   // two differ the moment someone changes a cell size without re-running.
   const [served, setServed] = useState(null);
+  // Obstacles marked on an uploaded plan, in the space the response uses.
+  const [imageObstacles, setImageObstacles] = useState([]);
 
   // The proof only exists over angles, so asking for it without rotation would
   // buy nothing and cost tens of seconds. The checkbox below is disabled in
@@ -37,7 +39,7 @@ export default function App() {
       if (mode === "image") {
         if (!file) throw new Error("Choose an image first.");
         data = await packImage(file, Number(cellWidth), Number(cellHeight),
-                               rotate, proving);
+                               rotate, proving, imageObstacles);
       } else {
         if (polygons.length === 0) throw new Error("Draw or enter a shape first.");
         const [shape, ...obstacles] = polygons;
@@ -137,7 +139,8 @@ export default function App() {
       )}
 
       {mode === "image" ? (
-        <ImageInput onFileSelected={setFile} />
+        <ImageInput onFileSelected={setFile}
+                    onObstaclesChange={setImageObstacles} />
       ) : (
         <DrawCanvas polygons={polygons} onPolygonsChange={setPolygons} />
       )}

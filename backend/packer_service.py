@@ -327,8 +327,20 @@ def run_packing_from_image(
     cell_height: float,
     rotate: bool,
     certify: bool = False,
+    obstacle_points: Sequence[Sequence[Point]] = (),
 ) -> dict:
-    """Pack the boundary detected in raw image bytes. Raises ValueError on bad input."""
+    """Pack the boundary detected in raw image bytes. Raises ValueError on bad input.
+
+    `obstacle_points` are areas marked by hand, ADDED to whatever the tracing
+    found. Detection can only see what the plan draws as a hole; it cannot see a
+    pillar the survey missed, a stairwell added since, or an area someone has
+    decided to keep clear.
+
+    They are given in the same coordinate space as the returned `shape`, which
+    is the space the caller is looking at -- NOT raw image rows. `image_boundary`
+    flips the y axis while tracing, so an obstacle passed in image-row order
+    would land mirrored: in the wrong place, and plausibly enough to be believed.
+    """
     if cell_width <= 0 or cell_height <= 0:
         raise ValueError("cell dimensions must be positive")
 
@@ -337,6 +349,15 @@ def run_packing_from_image(
     if img is None:
         raise ValueError("could not read image: unsupported or corrupt file")
 
+    drawn = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
+
     packer = GridPacker.from_image(img, cell_width=cell_width, cell_height=cell_height)
+    if drawn:
+        # Rebuilt rather than mutated: GridPacker computes `usable` and its
+        # pivot at construction, so an obstacle added afterwards would be
+        # carried in the drawing and ignored by the solver.
+        packer = GridPacker(packer.shape, list(packer.obstacles) + drawn,
+                            cell_width=cell_width, cell_height=cell_height)
+
     best, certificate, rotation = _solve(packer, rotate, certify)
     return _placement_to_result(packer, best, certificate, rotation)
