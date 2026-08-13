@@ -5,3 +5,5 @@ opencv-python
 fastapi
 uvicorn
 python-multipart
+pytest
+pytest-xdist

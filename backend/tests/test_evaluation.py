@@ -446,3 +446,25 @@ def test_the_report_says_which_corpus_it_rendered(rows):
     assert "2 instances" in described
     assert "4 methods" in described
     assert f"{len(rows)} rows" in described
+
+
+def test_the_report_builds_its_certification_table_from_the_run(certified_rows):
+    """It was a table of literals pasted from a one-off loop, which went stale
+    the moment the search got faster -- the disc's window count fell by an
+    order of magnitude and the document still quoted the old one."""
+    from evaluation import report as report_module
+
+    data = report_module.certification_rows(
+        [{**vars(r)} for r in certified_rows])
+
+    header, *body = data
+    assert header[0] == "instance"
+    names = {row[0] for row in body}
+    assert "room-tilt23" in names
+    assert body[-1][0].startswith("all ")
+
+
+def test_the_certification_table_says_when_nothing_was_certified(rows):
+    from evaluation import report as report_module
+
+    assert report_module.certification_rows([{**vars(r)} for r in rows]) is None

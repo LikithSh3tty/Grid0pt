@@ -217,6 +217,45 @@ def headline_caption(rows: Sequence[dict]) -> str:
             f"cells worse.")
 
 
+def certification_rows(rows: Sequence[dict]) -> Optional[List[List[str]]]:
+    """Table 8, read off the run rather than pasted into it.
+
+    This was a block of literals copied from a one-off loop, and it went stale
+    the moment the search improved: exploiting the region's own symmetry cut a
+    disc from 239 windows to a tenth of that, and the document carried on
+    quoting 239. Now `evaluation.run --certify` produces the numbers and this
+    reads them, so the two cannot disagree.
+
+    Returns None when the run did not certify, so the caller can say that
+    plainly instead of rendering an empty table.
+    """
+    certified = [r for r in rows if r.get("rotation_bound") not in (None, "", "None")]
+    if not certified:
+        return None
+
+    per_instance: Dict[str, dict] = {}
+    for row in certified:
+        per_instance.setdefault(row["instance"], row)
+
+    out = [["instance", "achieved", "bound", "windows", "seconds"]]
+    nodes = seconds = 0
+    closed = 0
+    for name, row in sorted(per_instance.items()):
+        best = max(int(r["complete"]) for r in certified
+                   if r["instance"] == name)
+        out.append([name, str(best), str(row["rotation_bound"]),
+                    str(row["rotation_nodes"]),
+                    f"{float(row['rotation_seconds']):.0f}"])
+        nodes += int(row["rotation_nodes"])
+        seconds += float(row["rotation_seconds"])
+        if str(row["rotation_optimal"]).lower() in ("true", "1"):
+            closed += 1
+
+    out.append([f"all {len(per_instance)}", f"{closed} closed", "—",
+                str(nodes), f"{seconds:.0f}"])
+    return out
+
+
 def corpus_sentence(rows: Sequence[dict]) -> str:
     """Describe the run being rendered, counted from it.
 
@@ -1136,39 +1175,38 @@ def build(out_path: Path) -> Path:
              "box.", s["caption"]),
 
         para("5.4 What the rotation certificate says", s["h2"]),
-        para(
-            "Every instance in the quick corpus, certified: the bound over all "
-            "angles against what the pipeline achieved. A gap of zero with the "
-            "space closed is the strongest statement in this document — not "
-            "“the best anything here found”, but “no placement "
-            "of this grid on this region, at any angle, holds more cells”.",
-            s["body"]),
-        table([
-            ["instance", "complete", "bound", "windows", "seconds"],
-            ["room-aligned-3x3", "108", "108", "15", "25"],
-            ["room-offset-3x3", "108", "108", "15", "23"],
-            ["room-tilt12-3x3", "108", "108", "15", "32"],
-            ["room-tilt23-3x3", "108", "108", "15", "65"],
-            ["l-shape-3x3", "88", "88", "15", "17"],
-            ["u-shape-3x3", "96", "96", "15", "24"],
-            ["plus-3x3", "80", "80", "15", "17"],
-            ["l-shape-tilt12-3x3", "88", "88", "15", "23"],
-            ["room-pillars-3x3", "101", "101", "15", "26"],
-            ["room-pillars-offgrid-3x3", "91", "91", "30", "45"],
-            ["disc-3x3", "62", "62", "239", "117"],
-            ["stadium-3x3", "80", "80", "27", "67"],
-            ["plan-seed0-3x3", "68", "68", "15", "53"],
-            ["plan-seed1-3x3", "96", "96", "15", "61"],
-            ["traced-l0-3x3", "88", "88", "15", "78"],
-            ["traced-l23-3x3", "77", "77", "46", "190"],
-            ["all sixteen", "—", "gap 0", "522", "862"],
-        ], [46 * mm, 22 * mm, 20 * mm, 22 * mm, W - 110 * mm],
-            align_right=(1, 2, 3, 4)),
-        para("Table 8. 16 of 16 certified globally optimal, and all 8 proven "
-             "optima reached. Curved boundaries cost the most windows: the count "
-             "barely varies with angle, so nothing prunes on quality and the "
-             "split runs to the tolerance.", s["caption"]),
     ]
+
+    certification = certification_rows(rows)
+    if certification:
+        story += [
+            para(
+                "Every instance the run certified: the bound over all angles "
+                "against what the pipeline achieved. A gap of zero with the "
+                "space closed is the strongest statement in this document — "
+                "not “the best anything here found”, but “no "
+                "placement of this grid on this region, at any angle, holds "
+                "more cells”.",
+                s["body"]),
+            table(certification,
+                  [46 * mm, 22 * mm, 20 * mm, 22 * mm, W - 110 * mm],
+                  align_right=(1, 2, 3, 4)),
+            para("Table 8. Read from the run rather than pasted into the "
+                 "document, so the two cannot drift: this began as a block of "
+                 "literals and went stale the moment the search improved. "
+                 "Curved boundaries cost the most windows, since the count "
+                 "barely varies with angle and nothing prunes on quality.",
+                 s["caption"]),
+        ]
+    else:
+        story += [
+            para(
+                "This run did not certify, so there is no table here. "
+                "<font face='Courier'>python -m evaluation.run --certify</font> "
+                "produces one: the bound over all angles per instance, against "
+                "what the pipeline achieved.",
+                s["body"]),
+        ]
 
     # ---------------------------------------------------------------- 6
     story += [
