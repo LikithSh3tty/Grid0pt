@@ -1214,12 +1214,13 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>The vote's default weight is beaten on one shape family.</b> "
-            "See F13. It is reported rather than changed, because three wins on "
-            "three cell sizes of ONE traced outline is not evidence a default "
-            "should turn on, and silently tuning a shipped constant to the "
-            "corpus it is measured against is how a results table stops meaning "
-            "anything.",
+            "<b>The vote still misses on rectangular cells.</b> See F15. "
+            "Against the proven optimum the shipped pipeline now misses on 5 of "
+            "72, every one of them at 2×3 cells and none at square ones, so it "
+            "is a property of the vote's choice between two flush placements "
+            "rather than of its weighting. The certificate names the placement "
+            "that should have been found, which leaves the diagnosis settled and "
+            "only the fix outstanding.",
             "<b>Step 5 of the roadmap is the paper.</b> Not code, not attempted "
             "here.",
         ], s["bullet"]),
