@@ -674,6 +674,43 @@ class RotationCertificate:
                 f"optimal={self.optimal})")
 
 
+@dataclass(frozen=True)
+class PartialCertificate:
+    """The fewest partial cells possible, over every angle, proved.
+
+    The counterpart to `RotationCertificate`, and the thing that finally lets
+    the partial count be bounded without the covering argument's assumption:
+    that one holds at every angle but can fail to apply, `Certificate.angle_floor`
+    applies always but speaks for one angle, and this holds at every angle and
+    applies always.
+
+    achieved  : partial cells in the returned placement.
+    floor     : the fewest any placement at any angle could leave.
+    nodes     : angular windows examined.
+    exhausted : True when the period was ruled out rather than the budget spent.
+    """
+
+    achieved: int
+    floor: int
+    nodes: int
+    exhausted: bool
+
+    @property
+    def gap(self) -> int:
+        return self.achieved - self.floor
+
+    @property
+    def optimal(self) -> bool:
+        """No placement of this grid on this region, at any angle, leaves
+        fewer partial cells."""
+        return self.exhausted and self.gap == 0
+
+    def __repr__(self) -> str:                     # pragma: no cover - display
+        return (f"PartialCertificate(achieved={self.achieved}, "
+                f"floor={self.floor}, nodes={self.nodes}, "
+                f"optimal={self.optimal})")
+
+
 @dataclass
 class Placement:
     """Result of evaluating one grid placement (offset + angle)."""
@@ -2206,14 +2243,63 @@ class GridPacker:
         its weaknesses, holds over rotation too.
         """
         work = rotate(self.usable, -angle, origin=self._pivot) if angle else self.usable
+        return self._min_partial(_grow(work), _grow(work, -_GEOM_TOL))[0]
 
+    def partial_floor_bound(self, angle: float, half_window: float) -> int:
+        """A floor on the partial count for EVERY angle within the window.
+
+        `partial_floor` speaks for one angle. This speaks for a continuum of
+        them, which is what the covering bound of `certificate` claims and this
+        can claim without an assumption.
+
+        The bracket runs both ways, and that is the whole trick. Turning by
+        theta moves a point at radius r by exactly r*theta, so
+
+            shrink(R, radius*half)  inside  R(theta)  inside  grow(R, radius*half)
+
+        for every theta in the window. Both operations below are monotone in the
+        region, so over the window the touching set can only shrink as far as
+        the dilation of the SHRUNKEN region and the complete set can only grow
+        as far as the erosion of the GROWN one. Their difference is therefore at
+        or below the true partial count at every angle in the window and every
+        offset within it.
+
+        A wider window can only lower it, which is what lets a branch and bound
+        prune with it -- see `certify_partials`.
+        """
+        if half_window < 0:
+            raise ValueError("half_window must not be negative")
+
+        centre, radius = self._turning_circle
+        work = rotate(self.usable, -angle, origin=centre) if angle else self.usable
+
+        slack = radius * math.radians(half_window) / _BUFFER_INSCRIBED_RATIO
+        grown = _grow(work, _GEOM_TOL + slack)
+        shrunk = _grow(work, -(_GEOM_TOL + slack))
+        return self._min_partial(grown, shrunk)[0]
+
+    def _min_partial(self, complete_region, touching_region
+                     ) -> Tuple[int, float, float]:
+        """min over offsets of (cells meeting `touching_region` - cells inside
+        `complete_region`), exactly.
+
+        Split out because the floor at one angle and the floor over a window of
+        them differ only in which two regions go in: the same arrangement, the
+        same sampling, the same reason the sampling has to cover faces.
+
+        The OFFSET is returned with the count, and that is not a convenience.
+        `certify_partials` needs a placement that achieves the floor in order to
+        close on it, and the offset minimising partials is not the offset
+        maximising completes -- so taking the incumbent from the complete-cell
+        solver made the search miss achievable placements and then certify the
+        wrong number as optimal.
+        """
         complete_tiles = _fold_tiles(
-            _erode_by_cell(_grow(work), self.cw, self.ch), self.cw, self.ch)
+            _erode_by_cell(complete_region, self.cw, self.ch), self.cw, self.ch)
         touching_tiles = _fold_tiles(
-            _dilate_by_cell(_grow(work, -_GEOM_TOL), self.cw, self.ch),
-            self.cw, self.ch)
+            _dilate_by_cell(touching_region, self.cw, self.ch), self.cw, self.ch)
         if not touching_tiles:
-            return 0
+            return 0, 0.0, 0.0
 
         complete_tree = STRtree(complete_tiles) if complete_tiles else None
         touching_tree = STRtree(touching_tiles)
@@ -2227,9 +2313,130 @@ class GridPacker:
                                                 distance=_GEOM_TOL))
                         if complete_tree else 0)
             value = touching - complete
-            if best is None or value < best:
-                best = value
-        return max(0, best if best is not None else 0)
+            if best is None or value < best[0]:
+                best = (value, u, v)
+        if best is None:
+            return 0, 0.0, 0.0
+        return max(0, best[0]), best[1], best[2]
+
+    def _least_partial_at(self, angle: float) -> Placement:
+        """The placement at `angle` leaving fewest partial cells.
+
+        Not `optimize_erosion`, which maximises COMPLETE cells: a placement can
+        hold fewer complete cells and still leave fewer partial ones, so the two
+        searches return different offsets and only this one answers the question
+        `certify_partials` is asking. Scored by `evaluate`, as everything here
+        is, so the count is the same definition the rest of the module uses.
+        """
+        work = (rotate(self.usable, -angle, origin=self._pivot)
+                if angle else self.usable)
+        _, dx, dy = self._min_partial(_grow(work), _grow(work, -_GEOM_TOL))
+        return self.evaluate(dx, dy, angle)
+
+    def certify_partials(
+        self,
+        *,
+        max_nodes: int = MAX_CERTIFY_NODES,
+    ) -> Tuple[Placement, "PartialCertificate"]:
+        """The fewest partial cells any placement can have, over ALL angles.
+
+        The mirror of `certify_rotation`, minimising instead of maximising, and
+        the last bound here that needed an assumption. `certificate`'s covering
+        floor claims every angle but divides by the longest chord a cell can
+        hold, which is only the diagonal if the boundary crosses each cell once;
+        this claims every angle and divides by nothing.
+
+        Branch and bound over the placement period. `partial_floor_bound` gives
+        a floor for a whole window, so a window whose floor is already at or
+        above the fewest partials seen cannot contain anything better and is
+        discarded entire. Windows come off a heap lowest-floor-first, so when
+        the best remaining floor stops beating the incumbent every remaining
+        window does too, and the incumbent is the proven minimum.
+
+        The incumbent comes from `optimize_erosion` at each window's centre,
+        ranked on partials rather than completes -- the two disagree, and this
+        is the one place here that wants the second: a placement with fewer
+        complete cells can leave fewer partial ones.
+        """
+        if max_nodes < 1:
+            raise ValueError("max_nodes must be at least 1")
+
+        period = self.rotation_period
+        radius = self._turning_circle[1]
+
+        # Seeded from the vote, for the reason `certify_rotation` is: an optimum
+        # usually sits at a wall-flush angle attained at one exact value, and
+        # bisection midpoints never land on it. Without this the search proves
+        # the right floor and then cannot reach it -- on a 12x9 room tilted 23
+        # degrees it would report 8 against a floor of 0, correct and useless.
+        # The vote names 23; this evaluates the partial-minimising offset there.
+        best = self._least_partial_at(0.0)
+        try:
+            voted, _ = self.optimize_guided()
+        except Exception:                       # pragma: no cover - vote guard
+            voted = None
+        if voted is not None and voted.angle:
+            candidate = self._least_partial_at(voted.angle % period)
+            if candidate.partial < best.partial:
+                best = candidate
+
+        root = (period / 2.0, period / 2.0)
+        queue = [(self.partial_floor_bound(*root), root[0], root[1])]
+
+        nodes = 0
+        exhausted = False
+        floor = queue[0][0]
+        #: Lowest floor left by a window too narrow to split further. If one of
+        #: these still beats the incumbent the space was never closed, whatever
+        #: the queue looks like afterwards.
+        open_leaf = best.partial
+        while queue:
+            window_floor, centre, half_window = heapq.heappop(queue)
+            if window_floor >= best.partial:
+                # Lowest-floor-first: nothing left can go under the incumbent.
+                exhausted = True
+                floor = best.partial
+                break
+            if nodes >= max_nodes:
+                floor = window_floor
+                break
+
+            nodes += 1
+            # The incumbent comes from the offset that MINIMISES partials at
+            # this angle, not from the one maximising completes. The two are
+            # different placements, and taking the second made this search miss
+            # attainable answers and then certify the wrong one as optimal.
+            placement = self._least_partial_at(centre % period)
+            if placement.partial < best.partial:
+                best = placement
+
+            if radius * math.radians(half_window) > _GEOM_TOL:
+                half = half_window / 2.0
+                for child in (centre - half, centre + half):
+                    child_floor = self.partial_floor_bound(child % period, half)
+                    if child_floor < best.partial:
+                        heapq.heappush(queue, (child_floor, child, half))
+            elif window_floor < best.partial:
+                # A leaf too narrow to split, still claiming something better
+                # than anything found. Dropping it silently and letting the
+                # queue empty is what turned an unclosed search into a proof.
+                open_leaf = min(open_leaf, window_floor)
+            floor = min(best.partial, window_floor if queue else best.partial)
+        else:
+            exhausted = True
+            floor = best.partial
+
+        if open_leaf < best.partial:
+            exhausted = False
+            floor = min(floor, open_leaf)
+
+        certificate = PartialCertificate(
+            achieved=best.partial,
+            floor=min(floor, best.partial),
+            nodes=nodes,
+            exhausted=exhausted,
+        )
+        return best, certificate
 
     @property
     def _turning_circle(self) -> Tuple[Point, float]:

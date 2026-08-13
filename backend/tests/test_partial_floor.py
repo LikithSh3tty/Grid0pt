@@ -187,3 +187,110 @@ def test_the_service_reports_the_computed_floor_when_certifying():
     assert "angle_partial_floor" not in plain["stats"]
     assert certified["stats"]["angle_partial_floor"] >= 0
     assert certified["stats"]["angle_partial_gap"] >= 0
+
+
+# --------------------------------------------------------------------------- #
+# over every angle, not just the one asked about
+# --------------------------------------------------------------------------- #
+# Rotating by theta moves a point at radius r by r*theta, so a window of angles
+# is bracketed on BOTH sides:
+#
+#     shrink(R, radius*half) is inside R(theta) is inside grow(R, radius*half)
+#
+# The dilation is monotone in the region and so is the erosion, so over the
+# window the touching set can only shrink to the dilation of the shrunken
+# region, and the complete set can only grow to the erosion of the grown one.
+# Their difference bounds the partial count from below for every angle at once,
+# which is what turns a floor at one angle into a floor at all of them.
+
+def test_a_window_of_zero_is_the_floor_at_that_angle():
+    pk = packer(room(13.0, 10.0))
+
+    assert pk.partial_floor_bound(0.0, 0.0) == pk.partial_floor(0.0)
+
+
+def test_the_window_floor_is_under_every_angle_it_covers():
+    """Checked against placements at angles inside the window, since a floor
+    that some angle beats is not a floor."""
+    pk = packer(room(13.0, 10.0))
+    centre, half_window = 10.0, 4.0
+
+    floor = pk.partial_floor_bound(centre, half_window)
+
+    for theta in np.linspace(centre - half_window, centre + half_window, 9):
+        assert floor <= dense_min_partial(packer(room(13.0, 10.0)), steps=12,
+                                          angle=float(theta))
+
+
+def test_a_wider_window_can_only_lower_the_floor():
+    pk = packer(room(13.0, 10.0))
+
+    floors = [pk.partial_floor_bound(10.0, w) for w in (0.0, 0.5, 2.0, 8.0)]
+
+    assert floors == sorted(floors, reverse=True)
+
+
+def test_a_room_that_tiles_is_proven_to_need_no_partials_at_any_angle():
+    """The whole point: a claim over rotation with nothing assumed. A 12x9 room
+    tiles exactly, so zero partials is both achievable and unbeatable, and the
+    search has to close rather than merely report a small number."""
+    best, certificate = packer(room()).certify_partials()
+
+    assert certificate.floor == 0
+    assert certificate.achieved == 0
+    assert certificate.optimal
+    assert best.partial == 0
+
+
+def test_the_proven_floor_is_never_above_what_any_angle_achieves():
+    pk = packer(room(13.0, 10.0))
+
+    _, certificate = pk.certify_partials()
+
+    for angle in (0.0, 17.0, 33.0, 61.0):
+        assert certificate.floor <= dense_min_partial(
+            packer(room(13.0, 10.0)), steps=12, angle=angle)
+
+
+def test_a_budget_too_small_reports_an_open_floor_rather_than_a_proof():
+    """A disc, because a room that tiles is proven straight from the seed and
+    never spends a node -- so it cannot demonstrate what running out looks
+    like. On a disc the count barely varies with angle, nothing prunes, and the
+    budget is what stops the search."""
+    pk = packer(Point(0, 0).buffer(7.0, 12))
+
+    _, certificate = pk.certify_partials(max_nodes=2)
+
+    assert not certificate.optimal
+    assert certificate.floor <= certificate.achieved
+
+
+def test_the_search_finds_the_offset_that_minimises_partials_not_completes():
+    """Regression: the two objectives are not the same search.
+
+    A 12x9 room tilted 23 degrees still tiles exactly, so a 3x3 grid turned to
+    23 degrees leaves ZERO partial cells. The search reported 8, and called it
+    proven, because its incumbent came from the solver that maximises complete
+    cells -- which returns one placement per angle and need not be the one
+    leaving fewest partials. A floor above an achievable count is not a floor,
+    and claiming it is optimal is the worst failure this code has.
+    """
+    pk = packer(room(tilt=23.0))
+
+    best, certificate = pk.certify_partials()
+
+    assert certificate.floor == 0
+    assert certificate.achieved == 0
+    assert best.partial == 0
+
+
+def test_a_leaf_that_still_beats_the_incumbent_is_not_called_proven():
+    """The other half of that failure. A window too narrow to split is dropped
+    from the queue; if its floor is still under the incumbent, the space was
+    not closed and the certificate must not say it was."""
+    pk = packer(Point(0, 0).buffer(7.0, 12))
+
+    _, certificate = pk.certify_partials(max_nodes=12)
+
+    assert certificate.optimal == (certificate.floor == certificate.achieved
+                                   and certificate.exhausted)
