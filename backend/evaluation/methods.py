@@ -160,8 +160,12 @@ def build(quick: bool = True, with_reference: bool = False) -> List[Method]:
                "no R gate: rotate even when the fringe has no dominant direction"),
         Method("abl-weight0", "ablation", _guided(weight_power=0.0),
                "vote weight g(f) = 1: chord length only, near-complete cells not favoured"),
-        Method("abl-weight2", "ablation", _guided(weight_power=2.0),
-               "vote weight g(f) = f^2: near-complete cells favoured harder"),
+        # The note's linear weight, which was the default until certifying the
+        # full corpus showed g(f) = f^2 reaching the proven optimum on two more
+        # instances and fewer on none. Retained as the ablation that measures
+        # the change.
+        Method("abl-weight1", "ablation", _guided(weight_power=1.0),
+               "vote weight g(f) = f: the note's linear weight, the previous default"),
         # The note's literal vote circle is the PLACEMENT period (m = 360/P);
         # this implementation votes on the alignment period, always 90. The
         # period depends on the packer, so this one reads it at call time.

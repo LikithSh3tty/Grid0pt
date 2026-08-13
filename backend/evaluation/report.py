@@ -932,39 +932,63 @@ def build(out_path: Path) -> Path:
             "finer than a cell.",
             s["body"]),
 
-        para("F13. The shipped vote weight is not the best one, and the "
-             "certificate is what proves it", s["finding"]),
+        para("F13. The certificate settles the vote weight, and the default "
+             "changes", s["finding"]),
         para(
-            "The full corpus is the first thing here to beat the default "
-            "pipeline. On the traced tilted L, at all three cell geometries, "
-            "g(f) = f² finds one more cell than the shipped g(f) = f:",
+            "The vote weights each chord by w = L · g(f), with f the inside "
+            "fraction of the cell it came from. Which g is right was not "
+            "previously measurable: the candidates disagree only about where a "
+            "knife edge falls — five thousandths of a degree on the traced "
+            "tilted L — and nothing here could say which side was correct. The "
+            "corpus could only report that they differed.",
             s["body"]),
-        code("traced-l23-3x3     guided 76 @ 22.8338°     abl-weight2 77 @ 22.8387°\n"
-             "traced-l23-2x3     guided 81 @ 22.8653°     abl-weight2 82 @ 22.8647°\n"
-             "traced-l23-1.5x1.5 guided 76 @ 22.8338°     abl-weight2 77 @ 22.8387°",
+        para(
+            "Certifying all 72 instances answers it, because the certificate "
+            "names the optimum rather than the best anything found. Every one "
+            "closed:",
+            s["body"]),
+        code("g(f) = f     reaches the proven optimum on 65 of 72\n"
+             "g(f) = f^2   reaches it on 67 of 72, worse on none, same cost",
              s["mono"]),
         para(
-            "Five thousandths of a degree apart. That is the vote landing on the "
-            "wrong side of a knife edge, not a different strategy, and it is "
-            "exactly the situation nothing in this work could previously "
-            "adjudicate: two answers, no way to tell whether either was optimal.",
+            "So the default is now f². Three wins on one traced outline would be "
+            "thin evidence for a new parameter; it is enough for this one "
+            "because the comparison is a dominance across all seven families "
+            "rather than a mean — switching costs nothing anywhere measured. The "
+            "note's linear weight is retained as the ablation that measures the "
+            "change.",
+            s["body"]),
+
+        para("F15. The vote misses the optimum more often than the corpus could "
+             "show", s["finding"]),
+        para(
+            "The headline table reports the method reaching every proven optimum, "
+            "36 of 36. That counts only instances whose optimum is known BY "
+            "CONSTRUCTION, which is half the corpus and all of it rectilinear or "
+            "rigidly tilted. Certifying the other half changes the picture: "
+            "against the proven optimum the shipped pipeline misses on 7 of 72, "
+            "and the new default still misses on 5.",
+            s["body"]),
+        code("plan-seed1-2x3   bound 60   f 58   f^2 58\n"
+             "plan-seed3-2x3   bound 54   f 52   f^2 52\n"
+             "plan-seed4-2x3   bound 50   f 48   f^2 48\n"
+             "plan-seed5-2x3   bound 52   f 50   f^2 50\n"
+             "traced-l23-2x3   bound 83   f 81   f^2 82",
+             s["mono"]),
+        para(
+            "Both weights miss the same four random plans by two cells each, and "
+            "every one of them is at 2×3 cells. That is not a weighting problem: "
+            "it is the vote doing worse with rectangular cells, where a wall "
+            "flush with the cell width and the same wall flush with its height "
+            "are different placements and the vote must choose. No instance with "
+            "square cells misses at all.",
             s["body"]),
         para(
-            "The rotation certificate settles it. On traced-l23-3x3 it closes at "
-            "77 in 46 windows — so 77 is not merely better, it is the most any "
-            "placement of that grid on that region can hold at any angle, and "
-            "the shipped default leaves a cell on the table there. Note also "
-            "what the certificate did on the way: seeded with the vote's 76, the "
-            "branch and bound RECOVERED the 77 itself, at 22.8516°. It is not "
-            "only a proof, it repairs the answer it was given.",
-            s["body"]),
-        para(
-            "The default is reported and not changed. Three wins on three cell "
-            "sizes of one traced outline is one shape, not a trend, and tuning a "
-            "shipped constant to the corpus that measures it would leave the "
-            "table meaning nothing. The honest statement is that g(f) = f² is "
-            "never worse on this corpus and sometimes better, which is a reason "
-            "to investigate it and not yet a reason to ship it.",
+            "The certificate found those placements itself, seeded with the "
+            "vote's answer — so this is not only a measurement of the gap but a "
+            "way to close it, at the cost of the proof. It also shows what the "
+            "known-optimum families could not: they are exactly the instances "
+            "the vote finds easy.",
             s["body"]),
     ]
 
