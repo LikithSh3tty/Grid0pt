@@ -8,6 +8,9 @@ FastAPI or HTTP.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+from collections import OrderedDict, namedtuple
 from typing import List, Sequence, Tuple
 
 import cv2
@@ -20,6 +23,90 @@ Point = Tuple[float, float]
 
 DEFAULT_STEPS = 10
 ROTATE_STEP = 15
+
+#: Answers kept for repeat requests. Packing is deterministic and entirely CPU,
+#: so the same outline asked twice is the same work done twice -- and with
+#: `certify` that is tens of seconds, not one.
+#:
+#: 64 because the entries are results rather than references: each holds every
+#: cell polygon of a placement, which for a fine grid on a large plan is the
+#: largest object this service produces. A few dozen bounds the memory at
+#: something a server can hold while still covering the case this exists for,
+#: which is one client adjusting one shape.
+CACHE_SIZE = 64
+
+
+def _cache_key(shape_points, obstacle_points, cell_width, cell_height,
+               rotate, certify) -> str:
+    """A stable digest of everything that changes the answer.
+
+    Coordinates are rounded before hashing, so a client that rebuilds its list
+    and lands a float one ulp away still hits. The rounding is deliberately
+    coarser than `_GEOM_TOL`: two outlines differing by less than that produce
+    the same placement anyway, so treating them as one request is not an
+    approximation.
+
+    A ring is normalised by rotating it to start at its smallest vertex, since
+    the same polygon listed from a different starting point is the same
+    polygon. Direction is left alone -- Shapely normalises winding itself, and
+    reversing here would merge a ring with its mirror, which is not the same
+    shape.
+    """
+    def ring(points) -> Tuple[Tuple[float, float], ...]:
+        rounded = tuple((round(float(x), 6), round(float(y), 6))
+                        for x, y in points)
+        if not rounded:
+            return rounded
+        start = min(range(len(rounded)), key=lambda i: rounded[i])
+        return rounded[start:] + rounded[:start]
+
+    payload = repr((
+        ring(shape_points),
+        tuple(sorted(ring(o) for o in obstacle_points)),
+        round(float(cell_width), 9), round(float(cell_height), 9),
+        bool(rotate), bool(certify),
+    ))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_CacheInfo = namedtuple("_CacheInfo", "hits misses maxsize currsize")
+_cache: "OrderedDict[str, dict]" = OrderedDict()
+_cache_hits = 0
+_cache_misses = 0
+
+
+def _cached_result(key: str, compute):
+    """Least-recently-used, keyed on the digest ALONE.
+
+    Not `functools.lru_cache`, which keys on the whole argument tuple: the
+    geometry would be part of the key, Shapely hashes a polygon by its
+    coordinates, and the same outline listed from a different starting vertex
+    would hash differently -- defeating the normalisation `_cache_key` does and
+    leaving the cache useless to any client that rebuilds its coordinate list.
+    """
+    global _cache_hits, _cache_misses
+
+    if key in _cache:
+        _cache_hits += 1
+        _cache.move_to_end(key)
+        return _cache[key]
+
+    _cache_misses += 1
+    result = compute()
+    _cache[key] = result
+    if len(_cache) > CACHE_SIZE:
+        _cache.popitem(last=False)
+    return result
+
+
+def _cache_clear() -> None:
+    global _cache_hits, _cache_misses
+    _cache.clear()
+    _cache_hits = _cache_misses = 0
+
+
+def _cache_info() -> _CacheInfo:
+    return _CacheInfo(_cache_hits, _cache_misses, CACHE_SIZE, len(_cache))
 
 
 def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
@@ -177,12 +264,24 @@ def run_packing(
     if cell_width <= 0 or cell_height <= 0:
         raise ValueError("cell dimensions must be positive")
 
+    # Validated BEFORE the cache is consulted, so a bad request raises the same
+    # way every time instead of being remembered as an answer.
     shape = _to_polygon(shape_points, "shape")
     obstacles = [_to_polygon(pts, "obstacle") for pts in obstacle_points]
 
-    packer = GridPacker(shape, obstacles, cell_width=cell_width, cell_height=cell_height)
-    best, certificate, rotation = _solve(packer, rotate, certify)
-    return _placement_to_result(packer, best, certificate, rotation)
+    key = _cache_key(shape_points, obstacle_points, cell_width, cell_height,
+                     rotate, certify)
+    def compute():
+        packer = GridPacker(shape, obstacles, cell_width=cell_width,
+                            cell_height=cell_height)
+        best, certificate, rotation = _solve(packer, rotate, certify)
+        return _placement_to_result(packer, best, certificate, rotation)
+
+    result = _cached_result(key, compute)
+    # Handed out as a copy: the caller gets a plain dict and may do what it
+    # likes with it, and a mutation reaching the cache would poison every later
+    # request for that shape.
+    return copy.deepcopy(result)
 
 
 def run_packing_from_image(
