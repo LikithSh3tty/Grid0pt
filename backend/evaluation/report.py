@@ -977,11 +977,16 @@ def build(out_path: Path) -> Path:
              s["mono"]),
         para(
             "Both weights miss the same four random plans by two cells each, and "
-            "every one of them is at 2×3 cells. That is not a weighting problem: "
-            "it is the vote doing worse with rectangular cells, where a wall "
-            "flush with the cell width and the same wall flush with its height "
-            "are different placements and the vote must choose. No instance with "
-            "square cells misses at all.",
+            "every one of them is at 2×3 cells. That turned out not to be a "
+            "weighting problem at all, nor a matter of the vote choosing badly: "
+            "the vote had no evidence to choose from. Only oblique chords vote, "
+            "so a rectilinear plan at theta = 0 casts none, R is 0, and the gate "
+            "shuts. For square cells that is right, since a quarter turn "
+            "reproduces the grid; for rectangular cells it swaps the cell's "
+            "sides and is a different tiling. Solving 90 degrees unconditionally "
+            "recovers all four at three evaluations, and takes the pipeline from "
+            "7 misses to 1 against the proven optimum over the full corpus. What "
+            "remains is traced-l23-2x3, one cell under 83.",
             s["body"]),
         para(
             "The certificate found those placements itself, seeded with the "
@@ -1214,13 +1219,12 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>The vote still misses on rectangular cells.</b> See F15. "
-            "Against the proven optimum the shipped pipeline now misses on 5 of "
-            "72, every one of them at 2×3 cells and none at square ones, so it "
-            "is a property of the vote's choice between two flush placements "
-            "rather than of its weighting. The certificate names the placement "
-            "that should have been found, which leaves the diagnosis settled and "
-            "only the fix outstanding.",
+            "<b>One instance still misses.</b> Against the proven optimum the "
+            "pipeline now misses on 1 of 72 — traced-l23-2x3, one cell under 83 "
+            "— down from 7 before the vote weight was measured and the quarter "
+            "turn was added. The certificate names the placement that should "
+            "have been found, so what is missing is a reason the vote does not "
+            "name that angle, not a way to discover it.",
             "<b>Step 5 of the roadmap is the paper.</b> Not code, not attempted "
             "here.",
         ], s["bullet"]),
