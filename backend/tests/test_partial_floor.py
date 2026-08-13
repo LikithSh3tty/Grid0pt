@@ -318,3 +318,38 @@ def test_the_floor_is_attained_and_not_merely_bounded(shape):
     pk = packer(shape)
 
     assert pk._least_partial_at(0.0).partial == pk.partial_floor(0.0)
+
+
+def test_a_declining_covering_bound_falls_back_to_the_computed_one():
+    """The default response should not just shrug.
+
+    Where the covering bound's assumption fails it reports `certified` False
+    and quotes nothing usable -- on 9 of the full corpus's 72 instances. The
+    computed floor has no assumption to fail, so it is filled in automatically
+    exactly there, without being asked for. The cost is paid only on the
+    instances that need it.
+    """
+    teeth = [(0, 0)]
+    for i in range(12):
+        teeth += [(i + 0.5, 0.8), (i + 1.0, 0.0)]
+    serrated = Polygon(teeth + [(12, 9), (0, 9)])
+    pk = packer(serrated)
+    placement = pk.evaluate(0.0, 0.0, classify=True)
+
+    certificate = pk.certificate(placement)
+
+    assert certificate.certified is False
+    assert certificate.angle_floor is not None
+    assert certificate.angle_floor <= placement.partial
+
+
+def test_a_holding_covering_bound_is_not_charged_for_the_fallback():
+    """It costs a fraction of a second, which is worth paying only where the
+    cheap bound has failed."""
+    pk = packer(room())
+    placement = pk.evaluate(0.0, 0.0, classify=True)
+
+    certificate = pk.certificate(placement)
+
+    assert certificate.certified is True
+    assert certificate.angle_floor is None

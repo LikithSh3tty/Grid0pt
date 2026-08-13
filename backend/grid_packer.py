@@ -3213,10 +3213,16 @@ class GridPacker:
             floor=floor,
             recoverable_area=recoverable_area,
             recover_threshold=recover_threshold,
-            # Opt-in: it is a fraction of a second rather than nothing, and
-            # `certificate` runs on every row of the results table.
-            angle_floor=(self.partial_floor(placement.angle)
-                         if exact_floor else None),
+            # Opt-in, EXCEPT where the covering bound has declined. It costs a
+            # fraction of a second, which is not worth adding to every row of
+            # the results table -- but on an instance whose assumption failed
+            # the alternative is a response carrying no usable floor at all,
+            # and this one has no assumption to fail. So the cost is paid
+            # exactly where the cheap bound stopped being useful.
+            angle_floor=(
+                self.partial_floor(placement.angle)
+                if exact_floor or observed_max_chord > diagonal + _GEOM_TOL
+                else None),
         )
 
     def _recoverable_area(

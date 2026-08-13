@@ -174,7 +174,7 @@ The first block is the placement itself. The rest are diagnostics, and every one
 | `irreducible` | partial cells no placement can rescue (features smaller than a cell) |
 | `partial_floor` | fewest partial cells any placement of this grid on this region could have |
 | `optimality_gap` | achieved partials minus that floor; `0` certifies the result optimal |
-| `certified` | `false` when the floor's assumption doesn't hold here, so don't quote the gap |
+| `certified` | `false` when the floor's assumption doesn't hold here, so don't quote the gap — `angle_partial_floor` is filled in automatically when it does not |
 | `recoverable_area` | area still outside the region across partials worth reclaiming |
 | `resultant` | how concentrated the boundary orientations were, in `[0, 1]` |
 | `rotated` | whether that was confident enough to turn the grid |
@@ -207,5 +207,5 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- **The one instance that still misses.** `traced-l23-2x3` comes back one cell under its proven 83. The certificate names the placement the vote should have found, so what is missing is an explanation of why the vote does not name that angle — not a way to discover it.
-- **A cheaper certificate for an asymmetric shape with no dominant wall.** Symmetry handles the common case — a polygonised disc repeats every 7.5°, so the search does too. A shape that is flat in the angle *without* being symmetric would still split to the tolerance, and nothing here prunes it. No instance in the corpus does that, which is why it is a note rather than a measurement.
+- **Make the exact refine cheap enough to default to.** `refine="certified"` reaches placements the sampled refine cannot resolve — it is what closes the last corpus instance, where the optimum sits 0.03° from the voted angle and the probes are 1.25° apart — but it costs seconds rather than milliseconds, so the shipped pipeline still probes. The cost is a branch and bound over a 5° window; a bound that tightens faster near a knife edge would shrink it.
+- **A shape flat in the angle without being symmetric** would still split to the tolerance and nothing would prune it. Flatness in practice comes *from* symmetry, which is now exploited — an ellipse, a blob and a half-disc were checked and all three vary by two cells across the period. If such a shape exists the search reports `exhausted: false` rather than misleading, so this is a cost worth knowing about rather than a correctness gap.
