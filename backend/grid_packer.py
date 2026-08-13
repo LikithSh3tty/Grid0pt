@@ -306,6 +306,21 @@ VOTE_WEIGHT_POWER = 2.0
 #: complexity starts to cost more than the slack it removes.
 BOUND_MAX_SUBWINDOWS = 8
 
+#: Window the EXACT refine searches, against `REFINE_HALF_WINDOW` for the
+#: probing one. Narrower on purpose, and for a reason that only applies to a
+#: proof: a probe budget wants a wide window because 8 samples over 5 degrees
+#: is the most ground they can cover, while branch and bound spends nodes ruling
+#: out angles the vote has already excluded. On the one corpus instance that
+#: needs the exact refine, half a degree finds the same answer as five in half
+#: the time.
+#:
+#: It is not enough to make the exact refine the default. Measured over the
+#: quick corpus it finds more cells on NONE of the sixteen instances and costs
+#: four times the mean, up to a minute; over the full corpus it gains exactly
+#: one instance in 72. The cost is not what stops it being the default -- the
+#: value is.
+CERTIFIED_HALF_WINDOW = 0.5
+
 #: Angular windows `certify_rotation` may examine before giving up on closing
 #: the space. Not a resolution: the search is exact and this is only a budget,
 #: so hitting it makes the certificate report `exhausted=False` rather than
@@ -2879,7 +2894,7 @@ class GridPacker:
         partial_penalty: float = 0.0,
         r_min: float = R_MIN,
         refine: str = REFINE_METHOD,
-        refine_half_window: float = REFINE_HALF_WINDOW,
+        refine_half_window: Optional[float] = None,
         refine_probes: int = REFINE_PROBES,
         recover_min: float = RECOVERABLE_AREA_MIN,
         translation: str = "erosion",
@@ -2933,6 +2948,9 @@ class GridPacker:
                          other two are kept reachable because the difference
                          between them is an ablation of section 11.
         """
+        if refine_half_window is None:
+            refine_half_window = (CERTIFIED_HALF_WINDOW if refine == "certified"
+                                  else REFINE_HALF_WINDOW)
         if refine not in ("none", "grid", "golden", "certified"):
             raise ValueError(f"unknown refine method: {refine!r}")
         if translation not in ("erosion", "columns", "exact"):

@@ -500,3 +500,28 @@ def test_the_exact_refine_is_never_worse_than_no_refine():
 def test_an_unknown_refine_is_still_refused():
     with pytest.raises(ValueError):
         packer(room()).optimize_guided(refine="telepathy")
+
+
+def test_the_exact_refine_uses_a_tighter_window_than_the_probing_one():
+    """A probe budget wants a wide window: 8 samples over 5 degrees is the most
+    ground they can cover. A proof does not -- the vote lands within
+    hundredths of a degree, and every extra degree of window is nodes spent
+    ruling out angles the vote already excluded. Measured on the instance that
+    needs the exact refine, +/-0.5 finds the same 83 as +/-5 in half the time.
+    """
+    from grid_packer import CERTIFIED_HALF_WINDOW, REFINE_HALF_WINDOW
+
+    assert CERTIFIED_HALF_WINDOW < REFINE_HALF_WINDOW
+
+
+def test_the_caller_can_still_widen_the_exact_refine():
+    """The narrower default is a default, not a ceiling. Asserted against the
+    un-refined answer rather than a literal, so it states the property that
+    matters -- widening must not lose ground -- instead of a count that belongs
+    to whichever room this module's helper happens to build."""
+    base, _ = packer(room(tilt=23.0)).optimize_guided(refine="none")
+
+    widened, _ = packer(room(tilt=23.0)).optimize_guided(
+        refine="certified", refine_half_window=2.0)
+
+    assert widened.complete >= base.complete

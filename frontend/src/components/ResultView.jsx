@@ -27,6 +27,23 @@ function rotationVerdict(stats) {
 
 function partialVerdict(stats) {
   if (!stats.certified) {
+    // The covering bound's assumption failed. The backend fills in a floor
+    // that has no assumption to fail exactly here, so prefer it -- saying
+    // "not bounded" while the response carries a usable number is worse than
+    // having none. It speaks for this angle only, and says so.
+    if (stats.angle_partial_floor !== undefined) {
+      return stats.angle_partial_gap === 0
+        ? {
+            tone: "proven",
+            headline: "Fewest partial cells possible at this angle",
+            detail: `${stats.partial} partial cells, and no offset of this grid at this angle leaves fewer. The bound that holds across all angles does not apply to this shape, so this one speaks for the angle shown.`,
+          }
+        : {
+            tone: "open",
+            headline: `Within ${stats.angle_partial_gap} partial cells of the floor at this angle`,
+            detail: `${stats.partial} partial cells against a computed floor of ${stats.angle_partial_floor}. The bound that holds across all angles does not apply to this shape, so this one is computed for the angle shown instead.`,
+          };
+    }
     return {
       tone: "open",
       headline: "Partial count not bounded here",

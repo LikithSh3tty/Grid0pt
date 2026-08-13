@@ -87,6 +87,34 @@ describe("the verdicts", () => {
     expect(screen.getByText(/not bounded here/)).toBeInTheDocument();
     expect(screen.queryByText(/Within 6 partial cells/)).not.toBeInTheDocument();
   });
+
+  test("the computed floor is shown where the covering one declined", () => {
+    // Caught by running the app rather than by any unit test: the backend
+    // fills in a floor that needs no assumption exactly when the covering
+    // bound gives up, and the view went on saying nothing was bounded. A
+    // response carrying a usable number the interface refuses to show is worse
+    // than one that has none.
+    render(<ResultView result={result({
+      partial: 33, irreducible: 5, partial_floor: 2,
+      optimality_gap: 31, certified: false, recoverable_area: 0,
+      angle_partial_floor: 25, angle_partial_gap: 8,
+    })} />);
+
+    expect(screen.getByText(/Within 8 partial cells of the floor at this angle/))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/not bounded here/)).not.toBeInTheDocument();
+  });
+
+  test("a computed floor that is reached says so", () => {
+    render(<ResultView result={result({
+      partial: 25, irreducible: 5, partial_floor: 2,
+      optimality_gap: 23, certified: false, recoverable_area: 0,
+      angle_partial_floor: 25, angle_partial_gap: 0,
+    })} />);
+
+    expect(screen.getByText(/Fewest partial cells possible at this angle/))
+      .toBeInTheDocument();
+  });
 });
 
 describe("the request", () => {
