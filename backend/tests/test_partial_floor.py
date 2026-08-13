@@ -140,15 +140,22 @@ def test_the_floor_is_reported_for_the_angle_it_was_asked_about():
 
 def test_the_certificate_carries_the_computed_floor_when_asked():
     """Opt-in, like every other proof here: it costs a fraction of a second
-    rather than nothing, and a plain request should not start paying for it."""
-    pk = packer(room(13.0, 10.0))
+    rather than nothing, and a plain request should not start paying for it.
+
+    Shown on a disc rather than the 13x10 room, because on that room the cheap
+    bound comes back vacuous and the computed one is filled in without being
+    asked. Here the covering floor is a real number, so opting in is what makes
+    the difference.
+    """
+    pk = packer(Point(0, 0).buffer(7.0, 12))
     placement = pk.evaluate(0.0, 0.0, classify=True)
 
     plain = pk.certificate(placement)
     computed = pk.certificate(placement, exact_floor=True)
 
+    assert plain.floor > 0                       # the cheap bound said something
     assert plain.angle_floor is None
-    assert computed.angle_floor == 8
+    assert computed.angle_floor == pk.partial_floor(0.0)
 
 
 def test_the_computed_floor_beats_the_covering_bound_where_that_says_nothing():
@@ -180,9 +187,11 @@ def test_the_two_floors_are_not_the_same_claim():
 def test_the_service_reports_the_computed_floor_when_certifying():
     from packer_service import run_packing
 
-    shape = [(0.0, 0.0), (13.0, 0.0), (13.0, 10.0), (0.0, 10.0)]
-    plain = run_packing(shape, [], 3.0, 3.0, rotate=False)
-    certified = run_packing(shape, [], 3.0, 3.0, rotate=True, certify=True)
+    # A disc, for the reason above: on the 13x10 room the computed floor is
+    # filled in unasked, so it could not show what asking changes.
+    disc = list(Point(0, 0).buffer(7.0, 12).exterior.coords)[:-1]
+    plain = run_packing(disc, [], 3.0, 3.0, rotate=False)
+    certified = run_packing(disc, [], 3.0, 3.0, rotate=True, certify=True)
 
     assert "angle_partial_floor" not in plain["stats"]
     assert certified["stats"]["angle_partial_floor"] >= 0
@@ -352,4 +361,38 @@ def test_a_holding_covering_bound_is_not_charged_for_the_fallback():
     certificate = pk.certificate(placement)
 
     assert certificate.certified is True
+    assert certificate.angle_floor is None
+
+
+def test_a_floor_of_zero_that_explains_nothing_is_backed_up():
+    """The covering bound can hold and still say nothing.
+
+    On a 13x10 room at 3x3 its assumption is satisfied, so it is quoted -- and
+    it returns 0 while every placement leaves 8 partial cells. A gap measured
+    against it reads 8 when the truth at this angle is 0, which is not wrong so
+    much as useless, and indistinguishable from a result with real headroom.
+
+    So the computed floor is filled in when the cheap one comes back vacuous:
+    zero, on a placement that has partial cells needing explanation.
+    """
+    pk = packer(room(13.0, 10.0))
+    placement = pk.evaluate(0.0, 0.0, classify=True)
+
+    certificate = pk.certificate(placement)
+
+    assert certificate.floor == 0
+    assert certificate.certified is True
+    assert certificate.angle_floor == 8
+
+
+def test_a_floor_that_already_explains_the_partials_is_left_alone():
+    """No fallback where the cheap bound is doing its job -- a room that tiles
+    exactly has no partial cells for a floor of 0 to fail to explain."""
+    pk = packer(room())
+    placement = pk.evaluate(0.0, 0.0, classify=True)
+
+    certificate = pk.certificate(placement)
+
+    assert certificate.floor == 0
+    assert placement.partial == 0
     assert certificate.angle_floor is None

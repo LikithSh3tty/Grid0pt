@@ -174,7 +174,7 @@ The first block is the placement itself. The rest are diagnostics, and every one
 | `irreducible` | partial cells no placement can rescue (features smaller than a cell) |
 | `partial_floor` | fewest partial cells any placement of this grid on this region could have |
 | `optimality_gap` | achieved partials minus that floor; `0` certifies the result optimal |
-| `certified` | `false` when the floor's assumption doesn't hold here, so don't quote the gap — `angle_partial_floor` is filled in automatically when it does not |
+| `certified` | `false` when the floor's assumption doesn't hold here, so don't quote the gap. `angle_partial_floor` is filled in automatically then — and also when the floor holds but comes back 0 on a result that has partial cells, which is true and says nothing |
 | `recoverable_area` | area still outside the region across partials worth reclaiming |
 | `resultant` | how concentrated the boundary orientations were, in `[0, 1]` |
 | `rotated` | whether that was confident enough to turn the grid |

@@ -3231,15 +3231,23 @@ class GridPacker:
             floor=floor,
             recoverable_area=recoverable_area,
             recover_threshold=recover_threshold,
-            # Opt-in, EXCEPT where the covering bound has declined. It costs a
-            # fraction of a second, which is not worth adding to every row of
-            # the results table -- but on an instance whose assumption failed
-            # the alternative is a response carrying no usable floor at all,
-            # and this one has no assumption to fail. So the cost is paid
-            # exactly where the cheap bound stopped being useful.
+            # Opt-in, EXCEPT where the covering bound has stopped being useful,
+            # which happens two ways and both are worth catching. Its assumption
+            # can fail, leaving no usable floor at all. Or it can hold and still
+            # say nothing: on a 13x10 room at 3x3 it returns 0 while every
+            # placement leaves 8 partial cells, so the gap reads 8 where the
+            # truth at that angle is 0 -- not wrong, but indistinguishable from
+            # a result with real headroom.
+            #
+            # The computed floor has no assumption to fail and is never vacuous,
+            # so it is filled in for both cases and left off elsewhere, where it
+            # would be a fraction of a second spent to confirm a number already
+            # in hand.
             angle_floor=(
                 self.partial_floor(placement.angle)
-                if exact_floor or observed_max_chord > diagonal + _GEOM_TOL
+                if (exact_floor
+                    or observed_max_chord > diagonal + _GEOM_TOL
+                    or (floor == 0 and placement.partial > 0))
                 else None),
         )
 
