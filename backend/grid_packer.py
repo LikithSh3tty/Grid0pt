@@ -2333,8 +2333,28 @@ class GridPacker:
         """
         work = (rotate(self.usable, -angle, origin=self._pivot)
                 if angle else self.usable)
-        _, dx, dy = self._min_partial(_grow(work), _grow(work, -_GEOM_TOL))
-        return self.evaluate(dx, dy, angle)
+
+        # Two candidate offsets, from the two tolerance choices. Both report the
+        # same floor, and on a curved boundary they land about 1e-8 apart --
+        # which is enough to move a cell across the line. On a 12-segment disc
+        # the tolerant one scored 16 partials where the exact one scored 15, the
+        # value both of them called the floor: the bound was right and the
+        # placement was avoidably worse.
+        #
+        # Only the tolerant pair may define the FLOOR, since counting completes
+        # against the un-grown region would over-count partials and a floor
+        # above the truth is not a floor. Nothing stops the exact pair from
+        # proposing a placement, though, so both are scored and the better kept.
+        candidates = {
+            self._min_partial(_grow(work), _grow(work, -_GEOM_TOL))[1:],
+            self._min_partial(work, work)[1:],
+        }
+        best = None
+        for dx, dy in sorted(candidates):
+            placement = self.evaluate(dx, dy, angle)
+            if best is None or placement.partial < best.partial:
+                best = placement
+        return best
 
     def certify_partials(
         self,

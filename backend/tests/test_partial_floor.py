@@ -294,3 +294,27 @@ def test_a_leaf_that_still_beats_the_incumbent_is_not_called_proven():
 
     assert certificate.optimal == (certificate.floor == certificate.achieved
                                    and certificate.exhausted)
+
+
+@pytest.mark.parametrize("shape", [
+    Point(0, 0).buffer(7.0, 12),
+    Point(0, 0).buffer(9.0, 16),
+    room(13.0, 10.0),
+    room(tilt=23.0),
+])
+def test_the_floor_is_attained_and_not_merely_bounded(shape):
+    """The floor was one cell under on discs, and the floor was not the problem.
+
+    The minimiser is run twice with different tolerance choices, and the two
+    disagree in the last few digits of the offset -- around 1e-8 apart. On a
+    curved boundary that is enough to move a cell across the line: the offset
+    from the tolerant regions scored 16 partials where the offset from the
+    exact ones scored 15, which is the value both of them reported as the
+    floor. So the bound was right and the placement was avoidably worse.
+
+    Both candidates are scored now and the better kept, which is the same rule
+    the rest of this module follows: the search proposes, `evaluate` decides.
+    """
+    pk = packer(shape)
+
+    assert pk._least_partial_at(0.0).partial == pk.partial_floor(0.0)

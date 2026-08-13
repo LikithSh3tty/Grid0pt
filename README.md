@@ -207,6 +207,5 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- **Tighten the computed floor on curved boundaries.** Re-measured against attainable counts rather than a coarse sweep, it is exactly tight on five of seven fixed-angle cases; the exceptions are both discs, one cell under what any offset at that angle achieves. Over all angles even those close, because the value is attained at a different angle — so the remaining looseness costs nothing to the all-angles claim and only shows up if you ask about one angle in particular.
 - **The one instance that still misses.** `traced-l23-2x3` comes back one cell under its proven 83. The certificate names the placement the vote should have found, so what is missing is an explanation of why the vote does not name that angle — not a way to discover it.
 - **A cheaper certificate for an asymmetric shape with no dominant wall.** Symmetry handles the common case — a polygonised disc repeats every 7.5°, so the search does too. A shape that is flat in the angle *without* being symmetric would still split to the tolerance, and nothing here prunes it. No instance in the corpus does that, which is why it is a note rather than a measurement.
