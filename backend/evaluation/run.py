@@ -16,6 +16,7 @@ Usage, from the backend directory:
     python -m evaluation.run                      # quick: minutes
     python -m evaluation.run --full               # the paper run
     python -m evaluation.run --with-reference     # add the brute-force yardstick
+    python -m evaluation.run --certify            # prove the optimum per instance
     python -m evaluation.run --methods guided,exact --families rotated
     python -m evaluation.run --report results/*.json   # combine earlier chunks
 
@@ -78,6 +79,24 @@ class Row:
     resultant: Optional[float]
     rotated: Optional[bool]
 
+    #: The rotation certificate. It belongs to the INSTANCE rather than to the
+    #: method: a statement about that grid on that region, proved without
+    #: reference to any search. So it is computed once per instance and copied
+    #: onto every row of it, which is what makes `complete_vs_proven` possible --
+    #: `complete_vs_best` can only say "nothing here did better", while this says
+    #: how far from the best there could be.
+    #:
+    #: Defaulted, and last, so rows written before this existed still load: a
+    #: results file is a complete measurement and re-running the corpus to read
+    #: an old one would defeat the point of keeping it. None unless the run was
+    #: asked to certify, which costs more than every method in the table put
+    #: together.
+    rotation_bound: Optional[int] = None
+    rotation_optimal: Optional[bool] = None
+    rotation_nodes: Optional[int] = None
+    rotation_seconds: Optional[float] = None
+    complete_vs_proven: Optional[int] = None
+
 
 def measure(instance: Instance, method: Method) -> Row:
     """Run one method on one instance and read everything off the result.
@@ -127,8 +146,30 @@ def measure(instance: Instance, method: Method) -> Row:
     )
 
 
+def certify_instance(instance: Instance, verbose: bool = True):
+    """Prove the best any placement of this grid on this region could do.
+
+    Once per INSTANCE, not per method: the bound is a property of the region and
+    the cell, established without reference to any search, so charging it to a
+    method or recomputing it per method would both misrepresent it.
+
+    Returns the certificate and the seconds it took, or (None, 0.0) if the proof
+    raised -- a certificate that cannot be produced must not take the results
+    table down with it, since every measured row is still valid without it.
+    """
+    packer = instance.packer()
+    start = time.perf_counter()
+    try:
+        _, certificate = packer.certify_rotation()
+    except Exception as exc:                    # pragma: no cover - GEOS guard
+        if verbose:
+            print(f"  certificate failed on {instance.name}: {exc}")
+        return None, 0.0
+    return certificate, time.perf_counter() - start
+
+
 def run(instances: Sequence[Instance], methods: Sequence[Method],
-        verbose: bool = True) -> List[Row]:
+        verbose: bool = True, certify: bool = False) -> List[Row]:
     rows: List[Row] = []
     total = len(instances) * len(methods)
     done = 0
@@ -155,6 +196,34 @@ def run(instances: Sequence[Instance], methods: Sequence[Method],
     for row in rows:
         row.complete_vs_best = row.complete - best_per_instance[row.instance]
 
+    if certify:
+        # After the measurements, never during them: the proof must not appear
+        # in any method's evaluation count or wall clock.
+        by_instance: Dict[str, List[Row]] = {}
+        for row in rows:
+            by_instance.setdefault(row.instance, []).append(row)
+
+        for instance in instances:
+            if instance.name not in by_instance:
+                continue
+            if verbose:
+                print(f"certifying {instance.name:<28s}", end="", flush=True)
+            certificate, seconds = certify_instance(instance, verbose)
+            if certificate is None:
+                continue
+            if verbose:
+                print(f"  bound={certificate.bound:4d} "
+                      f"optimal={certificate.optimal} "
+                      f"windows={certificate.nodes:4d} {seconds:7.2f}s")
+            for row in by_instance[instance.name]:
+                row.rotation_bound = certificate.bound
+                row.rotation_optimal = certificate.optimal
+                row.rotation_nodes = certificate.nodes
+                row.rotation_seconds = round(seconds, 4)
+                # Signed like `complete_vs_best`: 0 means this method reached
+                # the proven optimum, negative says by how much it fell short.
+                row.complete_vs_proven = row.complete - certificate.bound
+
     return rows
 
 
@@ -174,9 +243,18 @@ def per_method_table(rows: Sequence[Row]) -> str:
     for row in rows:
         by_method.setdefault(row.method, []).append(row)
 
+    # "vs best" compares a method against whatever else happened to run, which
+    # cannot tell "everything found the optimum" from "everything missed it by
+    # the same amount". Where the run certified the instances there is an
+    # absolute reference, so the stronger column is shown instead of only the
+    # relative one -- and it is omitted entirely otherwise rather than filled
+    # with a placeholder, so an uncertified run reads exactly as it always did.
+    proven = any(r.complete_vs_proven is not None for r in rows)
+
     header = (f"{'method':<20s} {'group':<10s} {'mean-vs-best':>12s} "
               f"{'worst':>6s} {'known-hit':>10s} {'mean-ev':>9s} {'mean-s':>8s} "
-              f"{'mean-gap':>9s}")
+              f"{'mean-gap':>9s}"
+              + (f" {'mean-vs-optimal':>15s} {'at-optimal':>10s}" if proven else ""))
     lines = [header, "-" * len(header)]
 
     for name, group in sorted(by_method.items(),
@@ -186,14 +264,21 @@ def per_method_table(rows: Sequence[Row]) -> str:
         known = [r for r in group if r.reached_known_optimum is not None]
         hit = sum(1 for r in known if r.reached_known_optimum)
         certified = [r.optimality_gap for r in group if r.certified]
-        lines.append(
-            f"{name:<20s} {group[0].group:<10s} "
-            f"{statistics.mean(shortfalls):12.2f} "
-            f"{min(shortfalls):6d} "
-            f"{(f'{hit}/{len(known)}' if known else '-'):>10s} "
-            f"{statistics.mean(r.evaluations for r in group):9.0f} "
-            f"{statistics.mean(r.seconds for r in group):8.2f} "
-            f"{(statistics.mean(certified) if certified else float('nan')):9.2f}")
+        line = (f"{name:<20s} {group[0].group:<10s} "
+                f"{statistics.mean(shortfalls):12.2f} "
+                f"{min(shortfalls):6d} "
+                f"{(f'{hit}/{len(known)}' if known else '-'):>10s} "
+                f"{statistics.mean(r.evaluations for r in group):9.0f} "
+                f"{statistics.mean(r.seconds for r in group):8.2f} "
+                f"{(statistics.mean(certified) if certified else float('nan')):9.2f}")
+        if proven:
+            against = [r.complete_vs_proven for r in group
+                       if r.complete_vs_proven is not None]
+            reached = sum(1 for d in against if d == 0)
+            line += (f" {statistics.mean(against):15.2f} "
+                     f"{f'{reached}/{len(against)}':>10s}") if against else \
+                    f" {'-':>15s} {'-':>10s}"
+        lines.append(line)
 
     return "\n".join(lines)
 
@@ -260,6 +345,46 @@ def certificate_table(rows: Sequence[Row]) -> str:
     return "\n".join(lines)
 
 
+def rotation_table(rows: Sequence[Row]) -> str:
+    """Per instance: the proven optimum, and which methods reached it.
+
+    This is the only table here whose reference point is absolute. Every other
+    one scores a method against the best result some other method happened to
+    get, which cannot distinguish "everything found the optimum" from
+    "everything missed it by the same amount".
+    """
+    certified = [r for r in rows if r.rotation_bound is not None]
+    if not certified:
+        return "(not certified: re-run with --certify)"
+
+    by_instance: Dict[str, List[Row]] = {}
+    for row in certified:
+        by_instance.setdefault(row.instance, []).append(row)
+
+    header = (f"{'instance':<28s} {'proven':>7s} {'verdict':>9s} "
+              f"{'windows':>8s} {'seconds':>8s} {'methods at optimum':>20s}")
+    lines = [header, "-" * len(header)]
+    for name, group in sorted(by_instance.items()):
+        first = group[0]
+        reached = sum(1 for r in group if r.complete_vs_proven == 0)
+        lines.append(
+            f"{name:<28s} "
+            f"{first.rotation_bound:7d} "
+            f"{('proven' if first.rotation_optimal else 'open'):>9s} "
+            f"{first.rotation_nodes:8d} "
+            f"{first.rotation_seconds:8.2f} "
+            f"{f'{reached}/{len(group)}':>20s}")
+
+    proven = sum(1 for g in by_instance.values() if g[0].rotation_optimal)
+    lines.append("")
+    lines.append(f"instances certified globally optimal : "
+                 f"{proven} of {len(by_instance)}")
+    lines.append(f"windows / seconds total              : "
+                 f"{sum(g[0].rotation_nodes for g in by_instance.values())} / "
+                 f"{sum(g[0].rotation_seconds for g in by_instance.values()):.0f}")
+    return "\n".join(lines)
+
+
 def load_rows(paths: Sequence[Path]) -> List[Row]:
     """Re-read rows written by earlier runs.
 
@@ -314,12 +439,15 @@ def write_outputs(rows: Sequence[Row], meta: dict, stem: str) -> Path:
 # entry point
 # --------------------------------------------------------------------------- #
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--full", action="store_true",
                         help="the paper run: every tilt, cell geometry and seed")
     parser.add_argument("--with-reference", action="store_true",
                         help="also run the brute-force yardstick (slow)")
+    parser.add_argument("--certify", action="store_true",
+                        help="prove the optimum per instance and score every "
+                             "method against it (slow: tens of seconds each)")
     parser.add_argument("--methods", default="",
                         help="comma-separated method names to keep")
     parser.add_argument("--families", default="",
@@ -329,7 +457,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--report", nargs="+", default=None, metavar="JSON",
                         help="run nothing: report over rows from earlier runs")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.report:
         paths = [Path(p) for p in args.report]
@@ -346,6 +478,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(ablation_table(rows))
         print("\n== certificate ==")
         print(certificate_table(rows))
+        print("\n== rotation certificate ==")
+        print(rotation_table(rows))
         return 0
 
     quick = not args.full
@@ -368,7 +502,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"methods: {len(methods)} -> {', '.join(m.name for m in methods)}\n")
 
     started = time.time()
-    rows = run(instances, methods, verbose=not args.quiet)
+    rows = run(instances, methods, verbose=not args.quiet,
+               certify=args.certify)
     elapsed = time.time() - started
 
     print("\n== per method ==")
@@ -377,10 +512,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(ablation_table(rows))
     print("\n== certificate ==")
     print(certificate_table(rows))
+    if args.certify:
+        print("\n== rotation certificate ==")
+        print(rotation_table(rows))
 
     meta = {
         "quick": quick,
         "with_reference": args.with_reference,
+        "certified": args.certify,
         "instances": len(instances),
         "methods": [m.name for m in methods],
         "seconds": round(elapsed, 1),

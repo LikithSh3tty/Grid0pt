@@ -325,3 +325,88 @@ def test_the_outputs_are_written(rows, tmp_path, monkeypatch):
     assert path.exists()
     assert (tmp_path / "unit.json").exists()
     assert path.read_text(encoding="utf-8").count("\n") == len(rows) + 1
+
+
+# --------------------------------------------------------------------------- #
+# the rotation certificate, measured rather than quoted
+# --------------------------------------------------------------------------- #
+# The certificate is a property of the INSTANCE -- of that grid on that region --
+# not of the method that searched it. So it is computed once per instance and
+# attached to every row, which is what lets a row be scored against the proven
+# optimum instead of against the best answer anything happened to find.
+
+@pytest.fixture(scope="module")
+def certified_rows():
+    instances = [
+        Instance("room", "rectangle", rectangle(12, 9), (), 3.0, 3.0,
+                 known_optimum=12),
+        Instance("room-tilt23", "rotated", shp_rotate(rectangle(12, 9), 23.0),
+                 (), 3.0, 3.0, known_optimum=12),
+    ]
+    methods = [m for m in methods_module.build(quick=True)
+               if m.name in ("uniform-s10", "guided")]
+    return run_module.run(instances, methods, verbose=False, certify=True)
+
+
+def test_the_certificate_is_absent_unless_asked_for(rows):
+    """It costs far more than every method in the table put together, so a plain
+    run must not start paying for it."""
+    for row in rows:
+        assert row.rotation_bound is None
+        assert row.complete_vs_proven is None
+
+
+def test_every_row_of_an_instance_carries_the_same_bound(certified_rows):
+    """One certificate per instance, not per method. A bound that differed by
+    method would mean it was measuring the search rather than the region."""
+    for name in ("room", "room-tilt23"):
+        bounds = {r.rotation_bound for r in certified_rows if r.instance == name}
+        assert bounds == {12}
+
+
+def test_the_shortfall_is_measured_against_the_proven_optimum(certified_rows):
+    """The column the certificate exists to make possible. `complete_vs_best`
+    can only say "nothing here did better"; this says how far from the best
+    there could be -- and the uniform sweep on a tilted room is the case where
+    those two differ."""
+    tilted = {r.method: r for r in certified_rows if r.instance == "room-tilt23"}
+
+    assert tilted["guided"].complete_vs_proven == 0
+    assert tilted["uniform-s10"].complete_vs_proven < 0
+
+
+def test_the_certificate_reports_that_it_closed(certified_rows):
+    for row in certified_rows:
+        assert row.rotation_optimal is True
+        assert row.rotation_nodes > 0
+
+
+def test_the_rotation_table_renders(certified_rows):
+    text = run_module.rotation_table(certified_rows)
+
+    assert "room-tilt23" in text
+    assert "proven" in text.lower()
+
+
+def test_the_rotation_table_says_so_when_nothing_was_certified(rows):
+    assert "--certify" in run_module.rotation_table(rows)
+
+
+def test_the_driver_takes_a_certify_flag():
+    parsed = run_module.build_parser().parse_args(["--certify"])
+
+    assert parsed.certify is True
+    assert run_module.build_parser().parse_args([]).certify is False
+
+
+def test_the_per_method_table_scores_against_the_proven_optimum(certified_rows):
+    """Once an instance is certified, "how far below the best anyone got" is
+    the weaker question. The column only appears when there is a proof to
+    measure against, so an uncertified run reads exactly as it did before."""
+    certified = run_module.per_method_table(certified_rows)
+    plain = run_module.per_method_table(
+        [run_module.Row(**{**vars(r), "rotation_bound": None,
+                           "complete_vs_proven": None}) for r in certified_rows])
+
+    assert "vs-optimal" in certified
+    assert "vs-optimal" not in plain
