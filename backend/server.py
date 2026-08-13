@@ -15,10 +15,11 @@ from typing import List, Tuple
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from packer_service import run_packing, run_packing_from_image
+from packer_service import run_export, run_packing, run_packing_from_image
 
 app = FastAPI(title="Grid Packer API")
 
@@ -50,6 +51,33 @@ def pack_polygon(req: PolygonRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class ExportRequest(PolygonRequest):
+    #: "csv" for a spreadsheet or a script, "dxf" for a drawing package.
+    format: str = "csv"
+
+
+@app.post("/api/export/polygon")
+def export_polygon(req: ExportRequest):
+    """The packed layout as a file, rather than as JSON to redraw from.
+
+    Served as an attachment: inline it opens as a wall of text in the browser,
+    and the point of it is a file that goes to CAD.
+    """
+    try:
+        text, media_type, filename = run_export(
+            req.shape, req.obstacles, req.cell_width, req.cell_height,
+            req.rotate, req.format, req.certify,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return Response(
+        content=text,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/pack/image")

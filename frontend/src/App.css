@@ -304,3 +304,26 @@ button:disabled {
   font-size: 0.8rem;
   margin-top: 0.25rem;
 }
+
+/* Export sits under the result, not in the controls: it acts on what was
+   produced rather than on what will be. */
+.export-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  font-size: 0.85rem;
+}
+
+.export-label {
+  color: var(--muted);
+}
+
+.export-button {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+}
+
+.export-error {
+  color: #d06a6a;
+}

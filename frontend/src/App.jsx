@@ -2,6 +2,7 @@ import { useState } from "react";
 import ImageInput from "./components/ImageInput";
 import DrawCanvas from "./components/DrawCanvas";
 import ResultView from "./components/ResultView";
+import ExportButtons from "./components/ExportButtons";
 import { packImage, packPolygon } from "./api";
 import "./App.css";
 
@@ -16,6 +17,10 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  // The request that produced `result`, kept so an export asks for the
+  // layout on screen rather than for whatever the controls say now -- the
+  // two differ the moment someone changes a cell size without re-running.
+  const [served, setServed] = useState(null);
 
   // The proof only exists over angles, so asking for it without rotation would
   // buy nothing and cost tens of seconds. The checkbox below is disabled in
@@ -40,9 +45,22 @@ export default function App() {
                                  Number(cellHeight), rotate, proving);
       }
       setResult(data);
+      // Built from the RESPONSE, not from the inputs. That covers the image
+      // tab, whose outline the client never had -- it was traced server-side
+      // and comes back in the result -- and it guarantees an export describes
+      // the placement being displayed rather than what the controls now say.
+      setServed({
+        shape: data.shape,
+        obstacles: data.obstacles || [],
+        cell_width: Number(cellWidth),
+        cell_height: Number(cellHeight),
+        rotate,
+        certify: proving,
+      });
     } catch (err) {
       setError(err.message);
       setResult(null);
+      setServed(null);
     } finally {
       setLoading(false);
     }
@@ -125,6 +143,7 @@ export default function App() {
       )}
 
       <ResultView result={result} />
+      <ExportButtons request={result ? served : null} />
     </div>
   );
 }

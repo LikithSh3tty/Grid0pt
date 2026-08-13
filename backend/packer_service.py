@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 from shapely.geometry import Polygon
 
+from exporters import to_csv, to_dxf
 from grid_packer import GridPacker
 
 Point = Tuple[float, float]
@@ -282,6 +283,42 @@ def run_packing(
     # likes with it, and a mutation reaching the cache would poison every later
     # request for that shape.
     return copy.deepcopy(result)
+
+
+#: Export formats, mapped to the writer, the media type and the extension.
+#: Declared in one place so the endpoint validating a format and the exporter
+#: producing it cannot disagree about which are supported.
+EXPORT_FORMATS = {
+    "csv": (to_csv, "text/csv", "csv"),
+    "dxf": (to_dxf, "application/dxf", "dxf"),
+}
+
+
+def run_export(
+    shape_points: Sequence[Point],
+    obstacle_points: Sequence[Sequence[Point]],
+    cell_width: float,
+    cell_height: float,
+    rotate: bool,
+    fmt: str,
+    certify: bool = False,
+) -> Tuple[str, str, str]:
+    """Pack, then serialise the result. Returns (text, media type, filename).
+
+    Packs through `run_packing` rather than reimplementing it, so an export
+    describes exactly the placement the pack endpoint returns -- and, because
+    that is cached, asking for a drawing of something already on screen costs
+    the serialisation only.
+    """
+    if fmt not in EXPORT_FORMATS:
+        raise ValueError(
+            f"unknown export format {fmt!r}: expected one of "
+            f"{', '.join(sorted(EXPORT_FORMATS))}")
+
+    writer, media_type, extension = EXPORT_FORMATS[fmt]
+    result = run_packing(shape_points, obstacle_points, cell_width,
+                         cell_height, rotate, certify)
+    return writer(result), media_type, f"grid-layout.{extension}"
 
 
 def run_packing_from_image(
