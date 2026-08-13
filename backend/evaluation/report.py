@@ -989,16 +989,22 @@ def build(out_path: Path) -> Path:
             "so the request path does not run it. A curved boundary is its worst "
             "case: the count barely varies with angle, so nothing prunes on "
             "quality and the split runs down to the tolerance.",
-            "<b>The angular bound is uniform in the radius.</b> It grows the "
-            "region by radius × half-window everywhere, which is exactly right at "
-            "the boundary of the turning circle and conservative everywhere "
-            "inside it. A union of several rotations across the window, each "
-            "grown by a fraction of that, is strictly tighter for more geometry "
-            "per node — worth measuring, and not assumed here.",
-            "<b>The certificate is not in the harness.</b> The figures in F10 "
-            "come from a one-off run over the corpus rather than from a method in "
-            "the results table, because a proof and a search do not belong in the "
-            "same cost column. Reporting it properly means a column of its own.",
+            "<b>The partial-cell floor still rests on an assumption.</b> It "
+            "over-counts where the boundary wiggles inside one cell, and reports "
+            "that rather than a number that does not hold. An exact replacement "
+            "looks close — a cell touches the region exactly when its corner is "
+            "in the dilation U (+) (-cell), making partials a difference of two "
+            "lattice counts — but the argument that makes the complete count "
+            "exact reverses for a minimum: depth is upper semi-continuous, so a "
+            "maximum survives at an arrangement vertex and a minimum does not. "
+            "Sampling vertices returns a value ABOVE the true minimum, which is "
+            "not a floor. It needs the arrangement's faces, and is not attempted "
+            "here on the strength of looking nearly right.",
+            "<b>One instance will not close.</b> A 48-gon disc of radius 13 at "
+            "3×3 cells leaves a gap of 1 within the node budget, because its "
+            "count barely varies with angle so nothing prunes on quality. "
+            "Measured identically before and after the window splitting, so it "
+            "is a property of the instance rather than of the bound.",
             "<b>The note's event-driven update was not implemented.</b> Section 5 "
             "offers it as optional, to remove the O(N) factor by recomputing only "
             "cells near a crossed vertex. Both later solvers removed that factor "

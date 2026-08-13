@@ -188,8 +188,9 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- Measure the rotation certificate in the evaluation harness, so the results table reports how often the vote's answer was already provably optimal instead of leaving that to a one-off run.
-- Tighten the angular bound. It grows the region by `radius × half-window` uniformly, which is conservative for points near the centre; a union of a few rotations across the window, each grown by a fraction of that, would prune sooner on curved boundaries — the case that costs the most nodes today.
+- **An exact floor on the partial count.** The one bound here still resting on an assumption is the partial-cell floor, which over-counts when the boundary wiggles inside a single cell and reports `certified: false` rather than a number that doesn't hold — on about a fifth of the corpus. The promising route is the erosion machinery again: a cell touches the region exactly when its corner lies in the *dilation* `U ⊕ (−cell)`, so partials are `dilation count − erosion count`, the same lattice problem. What blocks it is that the argument reverses for a minimum. Depth is upper semi-continuous, so a *maximum* survives at an arrangement vertex — which is why the complete count is exact — but the minimum of a difference does not, and sampling vertices returns something **above** the true minimum rather than below it, which is not a floor. Doing it properly needs the arrangement's faces, not just its vertices.
+- **A disc that won't close.** A 48-gon of radius 13 at 3×3 leaves a gap of 1 within the node budget: its complete count barely varies with angle, so nothing prunes on quality and the split runs to the tolerance. Every other shape tried closes.
+- No test framework on the frontend. The UI is verified by build plus manual runs.
 - Cache/memoize repeated packing requests for the same shape + cell size.
 - Let obstacles be drawn directly on top of an uploaded image instead of only detected from it.
 - Export the packed layout (cell centers, count) as CSV/DXF for use in CAD tools.
