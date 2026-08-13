@@ -81,7 +81,11 @@ def _solve(packer: GridPacker, rotate: bool, certify: bool = False):
 
     classified = packer.evaluate(best.dx, best.dy, best.angle, classify=True)
     classified.rotation_vote = best.rotation_vote
-    return classified, packer.certificate(classified), rotation_certificate
+    # The computed partial floor rides on the same flag: it is cheap next to
+    # the rotation proof and pointless without one, since a caller who did not
+    # want bounds does not want this one either.
+    certificate = packer.certificate(classified, exact_floor=certify)
+    return classified, certificate, rotation_certificate
 
 
 def _polygon_coords(poly: Polygon) -> List[Point]:
@@ -124,6 +128,11 @@ def _placement_to_result(packer: GridPacker, best, certificate=None,
         stats["optimality_gap"] = certificate.gap
         stats["certified"] = certificate.certified
         stats["recoverable_area"] = certificate.recoverable_area
+        if certificate.angle_floor is not None:
+            # Computed rather than argued, and true only at this angle --
+            # named apart from partial_floor for exactly that reason.
+            stats["angle_partial_floor"] = certificate.angle_floor
+            stats["angle_partial_gap"] = certificate.angle_gap
 
     if rotation_certificate is not None:
         # The strongest statement the solver can make: not "the best this

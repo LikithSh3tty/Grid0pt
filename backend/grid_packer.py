@@ -38,7 +38,7 @@ import numpy as np
 import shapely
 from shapely.affinity import rotate, translate
 from shapely.geometry import LineString, Point, Polygon, box
-from shapely.ops import unary_union
+from shapely.ops import polygonize, unary_union
 from shapely.prepared import prep
 from shapely.strtree import STRtree
 
@@ -572,6 +572,22 @@ class Certificate:
     recoverable_area: float
     recover_threshold: float
 
+    #: The floor COMPUTED for this angle rather than argued for every angle --
+    #: `GridPacker.partial_floor`. None unless it was asked for.
+    #:
+    #: Deliberately separate from `floor` and never merged into it. They are
+    #: different claims: `floor` holds at every angle and rests on an assumption
+    #: it has to check, while this one holds only at this angle and rests on
+    #: nothing. Combining them would take the weaker scope from one and the
+    #: weaker guarantee from the other.
+    angle_floor: Optional[int] = None
+
+    @property
+    def angle_gap(self) -> Optional[int]:
+        """Partials above what is possible AT THIS ANGLE. 0 means no offset of
+        this grid on this region, at this angle, leaves fewer."""
+        return None if self.angle_floor is None else self.partial - self.angle_floor
+
     @property
     def gap(self) -> int:
         """Partials above the floor. 0 certifies the placement optimal in the
@@ -1044,6 +1060,24 @@ def _erode_by_cell(region, cw: float, ch: float):
     return frame.difference(blocked)
 
 
+def _dilate_by_cell(region, cw: float, ch: float):
+    """{ p : p + [0,cw]x[0,ch] meets `region` } -- the corners a cell touches at.
+
+    The erosion's mirror image, and simpler, because no complement is needed: a
+    cell placed at p meets the region exactly when p lies in the region swept
+    backwards along the cell, which is two segment sweeps of the region itself.
+
+    Together the two sets say everything about a placement's classification. A
+    corner in the erosion carries a complete cell, a corner in the dilation
+    carries a cell that meets the region at all, and the difference between the
+    two counts is precisely the partial cells -- which is what lets the partial
+    count be minimised exactly instead of bounded by an argument that can fail.
+    """
+    if region.is_empty:
+        return Polygon()
+    return _dilate_by_segment(_dilate_by_segment(region, -cw, 0.0), 0.0, -ch)
+
+
 def _fold_tiles(eroded, cw: float, ch: float) -> List:
     """`eroded` cut along the lattice and stacked into one cell of it.
 
@@ -1173,6 +1207,44 @@ def _ranked_offsets(tiles: Sequence, cw: float, ch: float,
     # the smallest offset wins, matching the other solvers' tie behaviour.
     ranked.sort(key=lambda r: (-r[0], r[1], r[2]))
     return ranked
+
+
+def _arrangement_samples(tiles: Sequence, cw: float, ch: float
+                         ) -> List[Tuple[float, float]]:
+    """One point inside every cell of the arrangement the tiles cut the torus into.
+
+    `_ranked_offsets` samples only the arrangement's VERTICES, which is enough
+    for a maximum and wrong for a minimum. Depth is upper semi-continuous, so a
+    maximum survives at a vertex; a minimum can sit strictly inside a face, and
+    sampling vertices alone returns a value ABOVE it -- the wrong side for a
+    floor. So all three dimensions are sampled: faces by a representative point,
+    edges by a midpoint, and the vertices themselves.
+
+    The linework is noded by `unary_union` first, so `polygonize` sees a planar
+    graph and returns the faces of the arrangement rather than the outlines it
+    was given.
+    """
+    lines: List = []
+    for tile in tiles:
+        lines.extend(_boundary_lines(tile))
+    lines.append(box(0.0, 0.0, cw, ch).boundary)
+
+    noded = unary_union(lines)
+    samples = {(0.0, 0.0)}
+
+    for x, y in _geom_coords(noded):                    # 0-cells
+        samples.add((x % cw, y % ch))
+
+    for part in getattr(noded, "geoms", [noded]):       # 1-cells
+        coords = list(getattr(part, "coords", []))
+        for (ax, ay), (bx, by) in zip(coords, coords[1:]):
+            samples.add((((ax + bx) / 2.0) % cw, ((ay + by) / 2.0) % ch))
+
+    for face in polygonize(noded):                      # 2-cells
+        point = face.representative_point()
+        samples.add((point.x % cw, point.y % ch))
+
+    return sorted(samples)
 
 
 def _face_samples(vals: Sequence[float], period: float) -> List[float]:
@@ -2075,6 +2147,69 @@ class GridPacker:
         results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
         return results[0], results
 
+    def partial_floor(self, angle: float = 0.0) -> int:
+        """The fewest partial cells any placement at `angle` can have.
+
+        Computed, not assumed. The covering bound of `certificate` divides the
+        boundary forced through cell interiors by the most one cell can hold,
+        taking that to be the cell's diagonal -- true only when each cell
+        carries a single straight crossing, and false wherever the boundary
+        wiggles inside a cell, which is why that bound has to measure its own
+        assumption and decline when it fails.
+
+        This needs no assumption. A cell is complete when its corner lies in the
+        region eroded by the cell, and meets the region at all when its corner
+        lies in the region dilated by it, so
+
+            partial(dx, dy) = |lattice in the dilation| - |lattice in the erosion|
+
+        and folding both modulo the lattice turns that into a difference of two
+        overlap depths: one piecewise-constant function on one torus.
+
+        SAMPLING IS WHERE THIS DIFFERS FROM `optimize_erosion`, and getting it
+        wrong is what a first attempt did. Pieces are closed, so depth is upper
+        semi-continuous and a MAXIMUM survives at an arrangement vertex -- which
+        is why the complete count can be read off vertices alone. A MINIMUM
+        cannot: it may sit strictly inside a face, and vertices alone return a
+        value above it, which is the wrong side for a floor. So every cell of
+        the arrangement is sampled, faces included.
+
+        The two tolerances point in opposite directions ON PURPOSE, so the
+        result is a floor rather than an estimate. The erosion is grown by
+        `_GEOM_TOL` (so complete cells are over-counted) and the dilation is
+        taken from the region pulled IN by it (so touching cells are
+        under-counted). Both push the difference down, so the value returned is
+        at most the true minimum at every offset, never above it.
+
+        This is a floor at ONE angle. `certificate`'s covering bound, for all
+        its weaknesses, holds over rotation too.
+        """
+        work = rotate(self.usable, -angle, origin=self._pivot) if angle else self.usable
+
+        complete_tiles = _fold_tiles(
+            _erode_by_cell(_grow(work), self.cw, self.ch), self.cw, self.ch)
+        touching_tiles = _fold_tiles(
+            _dilate_by_cell(_grow(work, -_GEOM_TOL), self.cw, self.ch),
+            self.cw, self.ch)
+        if not touching_tiles:
+            return 0
+
+        complete_tree = STRtree(complete_tiles) if complete_tiles else None
+        touching_tree = STRtree(touching_tiles)
+
+        best = None
+        for u, v in _arrangement_samples(complete_tiles + touching_tiles,
+                                         self.cw, self.ch):
+            point = Point(u, v)
+            touching = len(touching_tree.query(point, predicate="intersects"))
+            complete = (len(complete_tree.query(point, predicate="dwithin",
+                                                distance=_GEOM_TOL))
+                        if complete_tree else 0)
+            value = touching - complete
+            if best is None or value < best:
+                best = value
+        return max(0, best if best is not None else 0)
+
     @property
     def _turning_circle(self) -> Tuple[Point, float]:
         """The centre and radius that make an angular window cost least.
@@ -2602,6 +2737,7 @@ class GridPacker:
         placement: Placement,
         *,
         recover_threshold: float = RECOVERABLE_FRACTION_MIN,
+        exact_floor: bool = False,
     ) -> "Certificate":
         """How far from optimal this placement could possibly be.
 
@@ -2684,6 +2820,10 @@ class GridPacker:
             floor=floor,
             recoverable_area=recoverable_area,
             recover_threshold=recover_threshold,
+            # Opt-in: it is a fraction of a second rather than nothing, and
+            # `certificate` runs on every row of the results table.
+            angle_floor=(self.partial_floor(placement.angle)
+                         if exact_floor else None),
         )
 
     def _recoverable_area(
