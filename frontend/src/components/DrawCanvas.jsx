@@ -14,10 +14,20 @@ function polygonsToText(polygons) {
   return polygons.map((pts) => pts.map(([x, y]) => `${x},${y}`).join(" ")).join("\n");
 }
 
+// The placeholder shows each line prefixed "shape:" or "obstacle:", naming what
+// that line is for. Those labels used to be rejected as coordinates, so typing
+// exactly what the placeholder offered failed with `invalid point "shape:"`.
+// The prefix is optional and stripped here: the first line is the shape and the
+// rest are obstacles by POSITION, which is what the caller relies on, so the
+// label is documentation rather than something to parse meaning out of.
+const LABEL = /^(shape|obstacle|hole)s?\s*:\s*/i;
+
 function textToPolygons(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const polygons = [];
-  for (const line of lines) {
+  for (const raw of lines) {
+    const line = raw.replace(LABEL, "").trim();
+    if (!line) continue;
     const pts = line.split(/\s+/).map((tok) => {
       const [xs, ys] = tok.split(",");
       const x = parseFloat(xs);
