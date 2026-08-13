@@ -217,6 +217,26 @@ def headline_caption(rows: Sequence[dict]) -> str:
             f"cells worse.")
 
 
+def certification_path() -> Optional[Path]:
+    """The fullest run that actually CERTIFIED, which need not be the fullest run.
+
+    Certifying is expensive enough that it is usually done on the quick corpus
+    while the headline tables come from the full one. Preferring the fullest
+    file for both meant a 72-instance uncertified run hid a 16-instance
+    certified one and the table silently emptied -- the same drift as before,
+    arriving through the fix for it.
+    """
+    for stem in RESULTS_STEMS:
+        candidate = RESULTS_DIR / f"{stem}.csv"
+        if not candidate.exists():
+            continue
+        with candidate.open(encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                if row.get("rotation_bound") not in (None, "", "None"):
+                    return candidate
+    return None
+
+
 def certification_rows(rows: Sequence[dict]) -> Optional[List[List[str]]]:
     """Table 8, read off the run rather than pasted into it.
 
@@ -1177,7 +1197,9 @@ def build(out_path: Path) -> Path:
         para("5.4 What the rotation certificate says", s["h2"]),
     ]
 
-    certification = certification_rows(rows)
+    certification_file = certification_path()
+    certification = (certification_rows(load_results(certification_file))
+                     if certification_file else None)
     if certification:
         story += [
             para(
@@ -1191,7 +1213,8 @@ def build(out_path: Path) -> Path:
             table(certification,
                   [46 * mm, 22 * mm, 20 * mm, 22 * mm, W - 110 * mm],
                   align_right=(1, 2, 3, 4)),
-            para("Table 8. Read from the run rather than pasted into the "
+            para(f"Table 8. From {certification_file.name}, read from the run "
+                 "rather than pasted into the "
                  "document, so the two cannot drift: this began as a block of "
                  "literals and went stale the moment the search improved. "
                  "Curved boundaries cost the most windows, since the count "
