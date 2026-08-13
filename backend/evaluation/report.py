@@ -1116,11 +1116,16 @@ def build(out_path: Path) -> Path:
             "Sampling vertices returns a value ABOVE the true minimum, which is "
             "not a floor. It needs the arrangement's faces, and is not attempted "
             "here on the strength of looking nearly right.",
-            "<b>One instance will not close.</b> A 48-gon disc of radius 13 at "
-            "3×3 cells leaves a gap of 1 within the node budget, because its "
-            "count barely varies with angle so nothing prunes on quality. "
-            "Measured identically before and after the window splitting, so it "
-            "is a property of the instance rather than of the bound.",
+            "<b>A flat objective is the certificate's worst case, and the "
+            "cost is arithmetic rather than a defect.</b> A 48-gon disc of "
+            "radius 13 at 3×3 holds 45 cells at every angle, so no window is "
+            "ever pruned on quality and the search must split until the bound "
+            "falls on its own. It does, but only below a half-window of "
+            "0.072° — 0.016 units of slack on a turning radius of 13 — which "
+            "is 627 leaves. It closes at 1471 windows in 503s; the default "
+            "budget of 600 stops it one cell short. What would help is a bound "
+            "that tightens faster when the objective is flat, which is precisely "
+            "when nothing else does.",
             "<b>The note's event-driven update was not implemented.</b> Section 5 "
             "offers it as optional, to remove the O(N) factor by recomputing only "
             "cells near a crossed vertex. Both later solvers removed that factor "
