@@ -253,8 +253,8 @@ def build(out_path: Path) -> Path:
         ["design note", "Grid0pt_Method_and_Strategy.pdf, 11 pages, 13 sections"],
         ["work covered", "note roadmap steps 1–4, plus corrections to the note"],
         ["head when rendered", head or "–"],
-        ["test suite", "317 tests, all passing"],
-        ["evaluation", "16 instances × 16 methods = 256 measured rows"],
+        ["test suite", "333 tests, all passing"],
+        ["evaluation", "quick: 16 × 16 = 256 rows; full: 72 × 18 = 1296 rows"],
     ], [38 * mm, W - 38 * mm])]
 
     story += [
@@ -340,7 +340,7 @@ def build(out_path: Path) -> Path:
             ["backend/evaluation/methods.py", "177", "baselines, the method, and the one-at-a-time ablations"],
             ["backend/evaluation/run.py", "397", "driver, metrics, reporting, multi-run merge"],
             ["backend/evaluation/report.py", "–", "this document"],
-            ["backend/tests/ (15 modules)", "–", "317 tests"],
+            ["backend/tests/ (16 modules)", "–", "333 tests"],
         ], [52 * mm, 14 * mm, W - 66 * mm], align_right=(1,)),
         para("Table 2. Where the work lives.", s["caption"]),
     ]
@@ -801,6 +801,67 @@ def build(out_path: Path) -> Path:
             "retired in favour of the packer's own counter. Two counters are two "
             "chances to be wrong about the number the paper reports as cost.",
             s["body"]),
+
+        para("F12. The full corpus agrees with the quick one, including where "
+             "that was inconvenient", s["finding"]),
+        para(
+            "72 instances against 18 methods, 1296 rows, 60 minutes. It was run "
+            "because the quick corpus is 16 instances and a conclusion drawn "
+            "from 16 is a conclusion about 16.",
+            s["body"]),
+        para(
+            "It confirms F9 at four times the size, which is the finding it "
+            "would have been most convenient to overturn: solving dx as well as "
+            "dy changes the complete count on NONE of the 72 instances — the "
+            "dx-enumerating ablation is worse on zero and better on zero. The "
+            "counterexamples that motivated the work are still only the ones "
+            "found by hunting for them. What the corpus does confirm is the "
+            "cost, at 4 evaluations against 29, and it now also shows the "
+            "erosion solver beating the full offset enumeration on quality: both "
+            "disc instances come back 61 against 62.",
+            s["body"]),
+        para(
+            "The partial-cell certificate's assumption holds a little more often "
+            "here than on the quick corpus, 63 of 72 against 13 of 16, and it "
+            "fails on exactly the shapes the explanation predicts: traced "
+            "outlines, a stadium, and off-grid pillars — boundaries with detail "
+            "finer than a cell.",
+            s["body"]),
+
+        para("F13. The shipped vote weight is not the best one, and the "
+             "certificate is what proves it", s["finding"]),
+        para(
+            "The full corpus is the first thing here to beat the default "
+            "pipeline. On the traced tilted L, at all three cell geometries, "
+            "g(f) = f² finds one more cell than the shipped g(f) = f:",
+            s["body"]),
+        code("traced-l23-3x3     guided 76 @ 22.8338°     abl-weight2 77 @ 22.8387°\n"
+             "traced-l23-2x3     guided 81 @ 22.8653°     abl-weight2 82 @ 22.8647°\n"
+             "traced-l23-1.5x1.5 guided 76 @ 22.8338°     abl-weight2 77 @ 22.8387°",
+             s["mono"]),
+        para(
+            "Five thousandths of a degree apart. That is the vote landing on the "
+            "wrong side of a knife edge, not a different strategy, and it is "
+            "exactly the situation nothing in this work could previously "
+            "adjudicate: two answers, no way to tell whether either was optimal.",
+            s["body"]),
+        para(
+            "The rotation certificate settles it. On traced-l23-3x3 it closes at "
+            "77 in 46 windows — so 77 is not merely better, it is the most any "
+            "placement of that grid on that region can hold at any angle, and "
+            "the shipped default leaves a cell on the table there. Note also "
+            "what the certificate did on the way: seeded with the vote's 76, the "
+            "branch and bound RECOVERED the 77 itself, at 22.8516°. It is not "
+            "only a proof, it repairs the answer it was given.",
+            s["body"]),
+        para(
+            "The default is reported and not changed. Three wins on three cell "
+            "sizes of one traced outline is one shape, not a trend, and tuning a "
+            "shipped constant to the corpus that measures it would leave the "
+            "table meaning nothing. The honest statement is that g(f) = f² is "
+            "never worse on this corpus and sometimes better, which is a reason "
+            "to investigate it and not yet a reason to ship it.",
+            s["body"]),
     ]
 
     # ---------------------------------------------------------------- 5
@@ -952,7 +1013,7 @@ def build(out_path: Path) -> Path:
 
         para("6.1 How to reproduce", s["h2"]),
         code("cd backend\n"
-             "python -m pytest tests -q                       # 317 tests\n"
+             "python -m pytest tests -q                       # 333 tests\n"
              "python -m evaluation.run                        # quick corpus\n"
              "python -m evaluation.run --full                 # every tilt, cell, seed\n"
              "python -m evaluation.run --with-reference       # add the brute-force yardstick\n"
@@ -1023,9 +1084,12 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>The full corpus has not been run end to end.</b> Everything here "
-            "is the quick corpus; the full sweep multiplies tilts, cell "
-            "geometries and seeds.",
+            "<b>The vote's default weight is beaten on one shape family.</b> "
+            "See F13. It is reported rather than changed, because three wins on "
+            "three cell sizes of ONE traced outline is not evidence a default "
+            "should turn on, and silently tuning a shipped constant to the "
+            "corpus it is measured against is how a results table stops meaning "
+            "anything.",
             "<b>Step 5 of the roadmap is the paper.</b> Not code, not attempted "
             "here.",
         ], s["bullet"]),
