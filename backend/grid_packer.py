@@ -2848,6 +2848,25 @@ class GridPacker:
         results = [base] + list(results[1:])
         evaluations = len(results) + 1          # + the classifying re-evaluate
 
+        # THE QUARTER TURN THE VOTE CANNOT PROPOSE. Only oblique chords vote, so
+        # a rectilinear region at theta = 0 casts no votes at all: R is 0, the
+        # gate below shuts, and the grid stays put. That is correct for square
+        # cells, where a quarter turn maps the grid onto itself. For rectangular
+        # cells it swaps the cell's width and height, which is a different
+        # tiling and can be much the better one -- a 9x8 room at 2x3 holds 8
+        # complete cells at theta = 0 and 12 at 90 degrees.
+        #
+        # So it is solved unconditionally rather than left to the vote, before
+        # the confidence gate can return. One extra solve, one evaluation, and
+        # the result pool still decides, so it can only help. Found by
+        # certifying the corpus: four random rectilinear plans at 2x3 cells sat
+        # two cells under the proven optimum, and all four are recovered here.
+        if self.cw != self.ch:
+            quarter, batch = solve_translation(
+                angles=(90.0,), partial_penalty=partial_penalty)
+            results.extend(batch)
+            evaluations += len(batch)
+
         vote = self._dominant_orientations(
             base,
             vote_period=vote_period,
@@ -2861,9 +2880,22 @@ class GridPacker:
             return best, results
 
         if not vote.confident(r_min):
-            # No dominant wall -> nothing to align to. Note section 8.1.
-            results.sort(key=lambda p: _objective(p, partial_penalty), reverse=True)
-            return attach(base)
+            # No dominant wall -> nothing to ALIGN to. Note section 8.1.
+            #
+            # The pool still decides, rather than the base being returned
+            # outright. That used to be the same thing, because with no
+            # confident vote the pool held nothing but the base. It now holds
+            # the quarter turn above, which no vote proposed and which is the
+            # better placement on exactly the rectilinear shapes that produce no
+            # votes -- returning the base here would compute it and throw it
+            # away. Ties still go to the smallest turn, so an unturned grid
+            # stays unturned unless turning is strictly better.
+            results.sort(
+                key=lambda p: (_objective(p, partial_penalty),
+                               -abs(_wrap_signed(p.angle - base.angle,
+                                                 vote.period))),
+                reverse=True)
+            return attach(results[0])
 
         def solve(angle: float) -> Placement:
             nonlocal evaluations

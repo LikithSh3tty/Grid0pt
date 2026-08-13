@@ -461,3 +461,42 @@ def test_an_unknown_refine_method_is_refused():
 
     with pytest.raises(ValueError, match="refine"):
         packer.optimize_guided(refine="newton")
+
+
+# --------------------------------------------------------------------------- #
+# the quarter turn the vote cannot propose
+# --------------------------------------------------------------------------- #
+
+def test_a_rectangular_cell_always_gets_its_quarter_turn():
+    """The vote is blind to this one by construction, not by misjudging it.
+
+    Only OBLIQUE chords vote, so a rectilinear shape at theta = 0 produces no
+    votes at all: R is 0, the gate shuts, and the grid stays put. That is right
+    for square cells, where a quarter turn reproduces the grid. It is wrong for
+    rectangular ones, where a quarter turn swaps the cell's width and height and
+    is a genuinely different tiling -- on a 9x8 room at 2x3 cells it is the
+    difference between 8 complete cells and 12.
+
+    Found by certifying the corpus: four random rectilinear plans at 2x3 came
+    back two cells under the proven optimum, all four recovered by 90 degrees.
+    """
+    packer = GridPacker(Polygon([(0, 0), (9, 0), (9, 8), (0, 8)]),
+                          cell_width=2.0, cell_height=3.0)
+
+    best, _ = packer.optimize_guided()
+
+    assert best.complete == 12
+
+
+def test_a_square_cell_is_not_charged_for_a_turn_that_changes_nothing():
+    """A quarter turn maps a square grid onto itself, so trying it would spend
+    a solve to reproduce the placement already in hand."""
+    packer = GridPacker(Polygon([(0, 0), (9, 0), (9, 8), (0, 8)]),
+                          cell_width=3.0, cell_height=3.0)
+    square, _ = packer.optimize_guided()
+
+    rectangular = GridPacker(Polygon([(0, 0), (9, 0), (9, 8), (0, 8)]),
+                          cell_width=2.0, cell_height=3.0)
+    rectangular.optimize_guided()
+
+    assert square.rotation_vote.evaluations < rectangular.evaluations
