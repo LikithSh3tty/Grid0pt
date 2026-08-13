@@ -906,6 +906,45 @@ def build(out_path: Path) -> Path:
             "one and the weaker guarantee from the other.",
             s["body"]),
 
+        para("F16. The partial floor holds over every angle too", s["finding"]),
+        para(
+            "F14 computed the partial floor at one angle. The covering bound of "
+            "section 9.1 was still the only one claiming to hold across all of "
+            "them, and it is the one that declines — so the weaker guarantee and "
+            "the weaker scope were split between two bounds with no single "
+            "statement carrying both.",
+            s["body"]),
+        para(
+            "The bracket that bounds the complete count over a window bounds "
+            "this one too, and in both directions at once. Turning by theta "
+            "moves a point at radius r by r·theta, so shrink(R) sits inside "
+            "R(theta) sits inside grow(R) across the window; the dilation and "
+            "the erosion are both monotone, so the touching set can only shrink "
+            "to the dilation of the shrunken region while the complete set can "
+            "only grow to the erosion of the grown one. Their difference is "
+            "under the true partial count at every angle in the window, and "
+            "branch and bound over the period closes it.",
+            s["body"]),
+        para(
+            "Two failures on the way there, both of which produced a confident "
+            "wrong answer rather than an error, and both worth recording because "
+            "the tests that eventually caught them are the ones a reader should "
+            "trust the result on. The incumbent was taken from the solver that "
+            "maximises complete cells — a different search, since a placement "
+            "can hold fewer complete cells and leave fewer partial ones. On a "
+            "12×9 room tilted 23 degrees, which tiles exactly and so admits zero "
+            "partials, it reported 8 and called it proven. And a window too "
+            "narrow to split was dropped from the queue without checking whether "
+            "its floor still beat the incumbent, so an unclosed search could "
+            "empty its queue and be reported as closed.",
+            s["body"]),
+        para(
+            "Measured on five shapes, all closing. The disc improves from 20 "
+            "partials unclosed to 15 proven, because the offset that minimises "
+            "partials is now searched for rather than inherited from the "
+            "complete-cell solver.",
+            s["body"]),
+
         para("F12. The full corpus agrees with the quick one, including where "
              "that was inconvenient", s["finding"]),
         para(
