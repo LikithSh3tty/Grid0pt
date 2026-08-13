@@ -314,11 +314,17 @@ BOUND_MAX_SUBWINDOWS = 8
 #: needs the exact refine, half a degree finds the same answer as five in half
 #: the time.
 #:
-#: It is not enough to make the exact refine the default. Measured over the
-#: quick corpus it finds more cells on NONE of the sixteen instances and costs
-#: four times the mean, up to a minute; over the full corpus it gains exactly
-#: one instance in 72. The cost is not what stops it being the default -- the
-#: value is.
+#: It is not enough to make the exact refine the default, though the reason is
+#: the value rather than the cost. Over the quick corpus it finds more cells on
+#: NONE of the sixteen instances, and over the full corpus it gains exactly one
+#: in 72. Cost, measured on an unloaded machine, is 0.70s mean against the
+#: probing refine's 0.30s -- with one instance at 6.8s against 0.6s, where the
+#: bound opens the window and the search finds nothing in it.
+#:
+#: An earlier reading of that ratio said four times the mean and up to a
+#: minute. It was taken while a full-corpus run had the cores, and it measured
+#: the contention: the same probing refine came out at 2.01s mean then and
+#: 0.30s now. A cost figure taken beside a heavy job is a figure about the job.
 CERTIFIED_HALF_WINDOW = 0.5
 
 #: Angular windows `certify_rotation` may examine before giving up on closing

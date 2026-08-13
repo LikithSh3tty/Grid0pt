@@ -525,3 +525,40 @@ def test_the_caller_can_still_widen_the_exact_refine():
         refine="certified", refine_half_window=2.0)
 
     assert widened.complete >= base.complete
+
+
+def test_the_exact_refine_declines_when_the_bound_says_it_cannot_gain():
+    """The refine is expensive; deciding not to run it is nearly free.
+
+    `rotation_bound` over the refine's own window is the same inequality the
+    search is built on, so a bound at or below the placement in hand PROVES no
+    angle in that window holds more cells. Skipping is then not a heuristic
+    but a consequence, and it costs about a tenth of a second to establish
+    where the refine itself costs seconds.
+
+    Measured on a room that tiles exactly: its leader is already unbeatable, so
+    the gate fires and the exact refine costs what the un-refined pipeline does.
+    """
+    lean = packer(room(tilt=23.0))
+    lean.optimize_guided(refine="certified")
+
+    plain = packer(room(tilt=23.0))
+    plain.optimize_guided(refine="none")
+
+    # A couple of evaluations for the gate's own bookkeeping, not the dozens a
+    # branch and bound over the window would spend.
+    assert lean.evaluations <= plain.evaluations + 2
+
+
+def test_the_gate_never_talks_the_refine_out_of_a_real_gain():
+    """The direction that matters. The bound may be loose -- it flags windows
+    where nothing is actually gained -- but it cannot be low, so an instance the
+    refine would have improved is never skipped."""
+    from evaluation import corpus
+
+    instance = [i for i in corpus.build(quick=False)
+                if i.name == "traced-l23-2x3"][0]
+
+    gated, _ = instance.packer().optimize_guided(refine="certified")
+
+    assert gated.complete == 83
