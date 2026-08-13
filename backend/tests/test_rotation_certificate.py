@@ -417,3 +417,45 @@ def test_the_default_weight_reaches_an_optimum_the_previous_one_missed():
     current, _ = packer(tilted).optimize_guided()
 
     assert current.complete >= previous.complete
+
+
+# --------------------------------------------------------------------------- #
+# symmetry: not searching what cannot differ
+# --------------------------------------------------------------------------- #
+# A disc is the certificate's worst case because its count is flat in the angle,
+# so nothing prunes on quality. But flat is not a coincidence here -- it is flat
+# BECAUSE the region is symmetric, and that symmetry is exact and checkable.
+# Turning a 48-gon by 7.5 degrees maps it onto itself, so the complete count
+# repeats every 7.5 degrees and searching a full 90 re-derives the same answer
+# twelve times.
+
+def test_a_polygonised_disc_reports_its_own_symmetry():
+    pk = packer(Point(0, 0).buffer(13.0, 12))
+
+    assert pk.rotation_search_period == pytest.approx(7.5, abs=1e-9)
+
+
+def test_a_shape_with_no_symmetry_searches_the_whole_period():
+    pk = packer(l_shape())
+
+    assert pk.rotation_search_period == pk.rotation_period
+
+
+def test_a_symmetry_coarser_than_the_grid_period_buys_nothing():
+    """A 12x9 room maps onto itself only at 180 degrees, which is worse than the
+    90 the square grid already gives. The search must not grow."""
+    pk = packer(room(12.0, 9.0))
+
+    assert pk.rotation_search_period == pk.rotation_period
+
+
+def test_the_stubborn_disc_closes_inside_the_default_budget():
+    """It needed 1471 windows and a raised budget. Twelve-fold symmetry means
+    eleven twelfths of that was re-deriving the same answer."""
+    pk = packer(Point(0, 0).buffer(13.0, 12))
+
+    best, certificate = pk.certify_rotation()
+
+    assert certificate.optimal
+    assert certificate.bound == 45
+    assert certificate.nodes < 600

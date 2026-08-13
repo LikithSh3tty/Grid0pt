@@ -1583,6 +1583,9 @@ class GridPacker:
         self._pivot = self.shape.centroid
         #: Minimum bounding circle, computed on demand -- see `_turning_circle`.
         self._circle: Optional[Tuple[Point, float]] = None
+        #: Rotational symmetry of the region, computed on demand -- see
+        #: `rotation_search_period`.
+        self._search_period: Optional[float] = None
 
         #: How many times `evaluate` has run on this packer. `evaluate` is the
         #: unit of work every search here is built from, so counting it is the
@@ -2362,6 +2365,7 @@ class GridPacker:
             raise ValueError("max_nodes must be at least 1")
 
         period = self.rotation_period
+        search = self.rotation_search_period
         radius = self._turning_circle[1]
 
         # Seeded from the vote, for the reason `certify_rotation` is: an optimum
@@ -2380,7 +2384,7 @@ class GridPacker:
             if candidate.partial < best.partial:
                 best = candidate
 
-        root = (period / 2.0, period / 2.0)
+        root = (search / 2.0, search / 2.0)
         queue = [(self.partial_floor_bound(*root), root[0], root[1])]
 
         nodes = 0
@@ -2460,6 +2464,67 @@ class GridPacker:
             self._circle = (circle.centroid,
                             float(shapely.minimum_bounding_radius(self.usable)))
         return self._circle
+
+    @property
+    def rotation_search_period(self) -> float:
+        """The angles that actually have to be searched, in degrees.
+
+        `rotation_period` is what the GRID repeats over. The REGION can repeat
+        sooner: turning a 48-gon by 7.5 degrees maps it onto itself, and a
+        region carried onto itself poses the same packing problem, so the
+        complete count repeats with it. Searching the grid's 90 degrees then
+        re-derives the same answer twelve times over.
+
+        This is where the certificate's worst case comes from and why it can be
+        removed. A disc is expensive because its count is flat in the angle so
+        nothing prunes on quality -- but it is flat BECAUSE it is symmetric, and
+        that symmetry is exact rather than approximate: it is a property of the
+        polygon the caller handed in, checkable by rotating and comparing.
+
+        Only symmetries that divide the grid's period are usable, since the
+        search range must be a period of the count and not merely of the region.
+        A 12x9 room maps onto itself at 180 degrees, which is coarser than the
+        90 a square grid already provides, so it buys nothing and is ignored.
+
+        Computed once. The candidates are the divisors of the vertex count,
+        because a rotation carrying a polygon onto itself must carry vertices
+        onto vertices.
+        """
+        if self._search_period is None:
+            self._search_period = self._smallest_useful_symmetry()
+        return self._search_period
+
+    def _smallest_useful_symmetry(self) -> float:
+        period = self.rotation_period
+        rings = [ring for ring in _iter_rings(self.usable)]
+        if not rings or self.usable.area <= 0.0:
+            return period
+
+        vertices = len(rings[0].coords) - 1
+        if vertices < 2:
+            return period
+
+        centre = self.usable.centroid
+        tolerance = _GEOM_TOL * self.usable.area
+        # Descending order means the FIRST hit is the smallest angle, which is
+        # the one worth having; ascending would stop at 180 and learn nothing.
+        for order in sorted((d for d in range(2, vertices + 1)
+                             if vertices % d == 0), reverse=True):
+            angle = 360.0 / order
+            if angle >= period:
+                continue
+            # Must divide the grid's period, or the reduced range is not a
+            # period of the count and the search would miss angles outright.
+            steps = period / angle
+            if abs(steps - round(steps)) > _GEOM_TOL:
+                continue
+            turned = rotate(self.usable, angle, origin=centre)
+            try:
+                if turned.symmetric_difference(self.usable).area <= tolerance:
+                    return angle
+            except Exception:                   # pragma: no cover - GEOS guard
+                continue
+        return period
 
     def _bound_subwindows(self, half_window: float) -> int:
         """How many pieces to cover an angular window with.
@@ -2589,6 +2654,9 @@ class GridPacker:
         best = seed
 
         period = self.rotation_period
+        # The REGION's period, which can be far shorter than the grid's when the
+        # shape is symmetric -- 7.5 degrees for a polygonised disc against 90.
+        search = self.rotation_search_period
         radius = self._turning_circle[1]
 
         def worth_splitting(half_window: float) -> bool:
@@ -2596,7 +2664,7 @@ class GridPacker:
 
         # Max-heap by bound (negated), tie-broken by window centre so the walk
         # is deterministic. One window to start: the whole period.
-        root = (period / 2.0, period / 2.0)
+        root = (search / 2.0, search / 2.0)
         queue = [(-self.rotation_bound(*root), root[0], root[1])]
 
         nodes = 0
