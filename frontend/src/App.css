@@ -181,6 +181,42 @@ button:disabled {
   color: var(--muted);
 }
 
+/* A claim about optimality is the strongest thing this app says, so it reads
+   as a statement rather than as another number in the strip. The two tones are
+   "proven" and "not proven"; there is deliberately no third, encouraging tone
+   for a result that merely looks good. */
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border-left: 3px solid var(--muted);
+  background: rgba(127, 127, 127, 0.08);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.verdict.proven {
+  border-left-color: #2e7d4f;
+}
+
+.verdict.open {
+  border-left-color: #b07a24;
+}
+
+.verdict span {
+  color: var(--muted);
+}
+
+.verdict-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .tabs {
   display: flex;
   gap: 0.5rem;
