@@ -850,12 +850,15 @@ def build(out_path: Path) -> Path:
             "so about them.",
             s["body"]),
         para(
-            "The cost profile is the interesting part. Thirteen instances close "
-            "in 15 windows, because the incumbent the vote supplies is already "
-            "optimal and the search only has to confirm it. The exceptions are "
-            "the curved ones: a disc costs 239 windows, since the count barely "
-            "varies with angle, so nothing prunes on quality and the split runs "
-            "down to the tolerance. 522 windows and 862 seconds for the corpus.",
+            "The cost profile is the interesting part. Most instances close in 9 "
+            "windows, because the incumbent the vote supplies is already optimal "
+            "and the search only has to confirm it. Curved and off-grid "
+            "boundaries cost more, and used to cost far more: a disc took 239 "
+            "windows when this was first measured and takes 29 now, since a "
+            "polygonised disc repeats every 7.5 degrees and the search no longer "
+            "re-derives the same answer twelve times over. 240 windows and 279 "
+            "seconds for the corpus, against 522 and 862 before the region's own "
+            "symmetry was used.",
             s["body"]),
         para(
             "This also retires a hedge. Section F4 argued the refine rarely earns "
