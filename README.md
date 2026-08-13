@@ -107,7 +107,7 @@ npm run build
 
 ```bash
 cd backend
-python -m pytest -q          # runs across cores; add -p no:xdist for one process
+python -m pytest -q          # runs across cores; -n 0 for a single process
 
 cd ../frontend
 npm test

@@ -6,7 +6,7 @@ import pytest
 from shapely.affinity import rotate as shp_rotate
 from shapely.geometry import Polygon
 
-from packer_service import _rotate_angles, run_packing, run_packing_from_image
+from packer_service import run_packing, run_packing_from_image
 
 
 def make_plan_image_bytes():
@@ -51,17 +51,28 @@ def test_run_packing_rejects_non_positive_cell_size():
         run_packing([(0, 0), (1, 0), (1, 1)], [], 0, 1, False)
 
 
-def test_square_cells_sweep_a_quarter_turn():
-    # rotating a square-celled grid by 90 deg reproduces the same grid,
-    # so [0, 90) is the whole search space
-    assert _rotate_angles(10, 10) == (0, 15, 30, 45, 60, 75)
+def test_square_cells_search_a_quarter_turn():
+    # Rotating a square-celled grid by 90 deg reproduces the same grid, so
+    # [0, 90) is the whole search space. Asserted on the packer, which is where
+    # the period now lives -- the service's own angle ladder is gone, and the
+    # baseline that needed it keeps its own copy in evaluation/methods.py.
+    from grid_packer import GridPacker
+    from shapely.geometry import Polygon
+
+    square = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    assert GridPacker(square, cell_width=10, cell_height=10).rotation_period == 90.0
 
 
-def test_rectangular_cells_sweep_a_half_turn():
-    # a w x h grid only repeats at 180 deg; 90 deg swaps w and h, which is
-    # a genuinely different packing
-    assert _rotate_angles(25, 6) == (0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165)
-    assert _rotate_angles(6, 25) == _rotate_angles(25, 6)
+def test_rectangular_cells_search_a_half_turn():
+    # A w x h grid only repeats at 180 deg; 90 deg swaps w and h, which is a
+    # genuinely different packing -- and, as the corpus showed, often the better
+    # one on a rectilinear plan.
+    from grid_packer import GridPacker
+    from shapely.geometry import Polygon
+
+    square = Polygon([(0, 0), (30, 0), (30, 30), (0, 30)])
+    assert GridPacker(square, cell_width=25, cell_height=6).rotation_period == 180.0
+    assert GridPacker(square, cell_width=6, cell_height=25).rotation_period == 180.0
 
 
 def test_rotation_finds_optimum_past_ninety_degrees():

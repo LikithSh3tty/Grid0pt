@@ -1,5 +1,12 @@
 """
 demo.py — runnable examples for grid_packer.GridPacker
+
+Each example runs what the packer actually does now, not what it did first.
+`optimize` is still here as the ORIGINAL uniform sweep and is what the
+evaluation's baselines call, but nothing serves requests through it any more:
+translation is solved on both axes by `optimize_erosion`, and the angle comes
+from the fringe vote in `optimize_guided`. A demo showing the sweep would be
+demonstrating the thing this package replaced.
 """
 import matplotlib
 matplotlib.use("Agg")
@@ -24,8 +31,9 @@ def rectangle_example():
 
     # baseline: grid pinned to origin, no search
     baseline = packer.evaluate(0, 0)
-    # optimized: slide the grid around to maximize complete cells
-    best, _ = packer.optimize(steps=16)
+    # solved: the offsets are not searched at all, they are read off the
+    # deepest overlap of the region eroded by the cell -- one evaluation.
+    best, _ = packer.optimize_erosion()
 
     print("RECTANGLE")
     print("  baseline :", baseline)
@@ -46,10 +54,13 @@ def l_shape_example():
     obstacles = [Polygon([(2, 2), (5, 2), (5, 5), (2, 5)])]
     packer = GridPacker(shape, obstacles, cell_width=1.5, cell_height=1.5)
 
-    # also let the grid rotate this time
-    best, _ = packer.optimize(steps=12, angles=range(0, 90, 15))
+    # also let the grid rotate this time: the angle comes from the fringe's own
+    # orientation vote rather than from a ladder of candidate angles.
+    best, _ = packer.optimize_guided()
     print("\nL-SHAPE")
-    print("  optimized:", best)
+    print("  solved   :", best)
+    print(f"  vote     : R={best.rotation_vote.resultant:.3f}, "
+          f"turned={best.rotation_vote.confident()}")
 
     fig, ax = plt.subplots(figsize=(8, 8))
     packer.plot(best, ax=ax)
@@ -72,12 +83,15 @@ def image_example():
     cv2.imwrite("demo_plan.png", img)
 
     packer = GridPacker.from_image("demo_plan.png", cell_width=40, cell_height=40)
-    best, _ = packer.optimize(steps=10)
+    best, _ = packer.optimize_erosion()
+    certificate = packer.certificate(
+        packer.evaluate(best.dx, best.dy, best.angle, classify=True))
 
     print("\nIMAGE")
     print(f"  detected : shape area={packer.shape.area:.0f}px², "
           f"{len(packer.obstacles)} obstacle(s)")
-    print("  optimized:", best)
+    print("  solved   :", best)
+    print(f"  certified: {certificate!r}")
 
     fig, ax = plt.subplots(figsize=(10, 7))
     packer.plot(best, ax=ax)

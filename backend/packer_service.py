@@ -22,9 +22,6 @@ from grid_packer import GridPacker
 
 Point = Tuple[float, float]
 
-DEFAULT_STEPS = 10
-ROTATE_STEP = 15
-
 #: Answers kept for repeat requests. Packing is deterministic and entirely CPU,
 #: so the same outline asked twice is the same work done twice -- and with
 #: `certify` that is tens of seconds, not one.
@@ -108,28 +105,6 @@ def _cache_clear() -> None:
 
 def _cache_info() -> _CacheInfo:
     return _CacheInfo(_cache_hits, _cache_misses, CACHE_SIZE, len(_cache))
-
-
-def _rotate_angles(cell_width: float, cell_height: float) -> Tuple[float, ...]:
-    """Grid angles worth testing, in degrees.
-
-    Translation needs no direction sweep: the grid is periodic, so the offsets
-    dx in [0, cw) / dy in [0, ch) that optimize() already scans cover every
-    possible shift in every direction (shifting left by k is the same grid as
-    shifting right by cw - k).
-
-    Rotation is different. Turning a cw x ch grid by 180 deg reproduces it, so
-    the search space is [0, 180). Only when cells are SQUARE does 90 deg also
-    reproduce it -- for rectangular cells a quarter turn swaps cw and ch, which
-    is a genuinely different packing and can be the better one.
-
-    RETAINED AS THE BASELINE, not used to serve requests. This fixed ladder plus
-    the uniform offset sweep is what the packer used to do, and the paper's
-    ablation measures the new solver against it, so it has to stay runnable and
-    unchanged. `_solve` is what requests go through.
-    """
-    period = 90 if cell_width == cell_height else 180
-    return tuple(range(0, period, ROTATE_STEP))
 
 
 def _solve(packer: GridPacker, rotate: bool, certify: bool = False):
