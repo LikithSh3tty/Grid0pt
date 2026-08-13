@@ -339,3 +339,51 @@ def test_the_endpoint_accepts_the_flag_and_defaults_it_off():
 
     assert "rotation_optimal" not in plain["stats"]
     assert certified["stats"]["rotation_optimal"] is True
+
+
+# --------------------------------------------------------------------------- #
+# tightening the bound: cover the window in pieces
+# --------------------------------------------------------------------------- #
+# Growing by radius x half-window is exact only at the turning circle and
+# conservative everywhere inside it, and the error is linear in the window. So
+# cover a wide window with several narrow ones instead: each sub-window is grown
+# by a fraction of the slack, and their union still contains every angle in the
+# window. Tighter for more geometry -- which turns out to be cheaper too, since
+# the smaller region erodes to fewer pieces than the fat one did.
+
+def test_splitting_the_window_tightens_the_bound():
+    pk = packer(room(tilt=23.0))
+
+    whole = pk.rotation_bound(30.0, 45.0, subwindows=1)
+    split = pk.rotation_bound(30.0, 45.0, subwindows=4)
+
+    assert split < whole
+
+
+def test_the_split_bound_still_covers_every_angle_in_the_window():
+    """Tightening is only allowed to remove slack, never to stop being a bound.
+    A dense scan of the window is the check, since it shares no reasoning with
+    the covering argument."""
+    pk = packer(room(tilt=23.0))
+    centre, half_window = 20.0, 6.0
+
+    bound = pk.rotation_bound(centre, half_window, subwindows=4)
+
+    for theta in np.linspace(centre - half_window, centre + half_window, 25):
+        assert exact_at(packer(room(tilt=23.0)), float(theta)) <= bound
+
+
+def test_a_wide_window_is_split_and_a_narrow_one_is_not():
+    """The split earns its cost only while the window is worth more slack than
+    a cell; below that it buys almost nothing and pays full geometry for it, so
+    the count is read off the slack rather than fixed."""
+    pk = packer(room(tilt=23.0))
+
+    assert pk._bound_subwindows(45.0) > 1
+    assert pk._bound_subwindows(0.05) == 1
+
+
+def test_splitting_does_not_break_the_window_of_zero():
+    pk = packer(room(tilt=23.0))
+
+    assert pk.rotation_bound(23.0, 0.0) == exact_at(pk, 23.0)
