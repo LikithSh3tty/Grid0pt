@@ -63,6 +63,20 @@ h1 {
   gap: 0.5rem !important;
 }
 
+/* Not hidden when unavailable: a control that vanishes teaches nobody it
+   exists, and this one is the whole point of the certificate. Dimmed, with a
+   title saying what it needs. */
+.checkbox-label.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 button {
   padding: 0.5rem 1.1rem;
   border-radius: 6px;
