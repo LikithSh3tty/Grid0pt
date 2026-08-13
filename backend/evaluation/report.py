@@ -1325,14 +1325,14 @@ def build(out_path: Path) -> Path:
             "Extending the computed floor is the same branch and bound the "
             "complete count already uses: over a window the dilation grows and "
             "the erosion shrinks, which bounds their difference from below.",
-            "<b>The computed floor is not quite tight on curved boundaries.</b> "
-            "Measured against attainable counts rather than a sweep, it is "
-            "exactly tight on five of seven fixed-angle cases and one cell under "
-            "on two discs. Over all angles even those close, because the value "
-            "is attained at some other angle, so the slack costs nothing to the "
-            "claim that matters and appears only when a single angle is asked "
-            "about. The earlier reading of this — one cell low on two of six — "
-            "compared against a 40-step sweep and was measuring the sweep.",
+            "<b>The two certificates search the same period separately.</b> A "
+            "shape wanting both pays for two trees. Merging them saves less than "
+            "it appears to: a window has to be kept alive when EITHER objective "
+            "still needs it, so a shared search explores the union of the two "
+            "trees and only the per-window geometry is saved. Measured, rotation "
+            "costs 0 to 5 windows and partials 0 to 11 on the shapes tried, so "
+            "the duplication is smaller than the phrase “paying twice” "
+            "suggests.",
             "<b>A flat objective is the certificate's worst case, and the "
             "cost is arithmetic rather than a defect.</b> A 48-gon disc of "
             "radius 13 at 3×3 holds 45 cells at every angle, so no window is "
@@ -1361,12 +1361,14 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>One instance still misses.</b> Against the proven optimum the "
-            "pipeline now misses on 1 of 72 — traced-l23-2x3, one cell under 83 "
-            "— down from 7 before the vote weight was measured and the quarter "
-            "turn was added. The certificate names the placement that should "
-            "have been found, so what is missing is a reason the vote does not "
-            "name that angle, not a way to discover it.",
+            "<b>One instance misses under the SHIPPED refine.</b> Against the "
+            "proven optimum the default pipeline misses on 1 of 72 — "
+            "traced-l23-2x3, one cell under 83 — down from 7 before the vote "
+            "weight was measured and the quarter turn added. "
+            "<font face='Courier'>refine=\"certified\"</font> reaches it, and "
+            "is not the default because it gains that one instance and no other; "
+            "see F17. So this is a choice already made rather than a gap still "
+            "open, and it is listed to keep the choice visible.",
             "<b>Step 5 of the roadmap is the paper.</b> Not code, not attempted "
             "here.",
         ], s["bullet"]),

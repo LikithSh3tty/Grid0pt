@@ -468,3 +468,23 @@ def test_the_certification_table_says_when_nothing_was_certified(rows):
     from evaluation import report as report_module
 
     assert report_module.certification_rows([{**vars(r)} for r in rows]) is None
+
+
+def test_the_certification_table_comes_from_whichever_run_certified(tmp_path,
+                                                                    monkeypatch):
+    """The main tables want the fullest run; this one wants the certified run,
+    and they need not be the same file. Preferring the fullest for both meant a
+    72-instance uncertified run hid a 16-instance certified one, and the table
+    silently emptied."""
+    from evaluation import report as report_module
+
+    monkeypatch.setattr(report_module, "RESULTS_DIR", tmp_path)
+    (tmp_path / "full.csv").write_text(
+        "instance,method,complete,rotation_bound\na,guided,5,\n", encoding="utf-8")
+    (tmp_path / "quick.csv").write_text(
+        "instance,method,complete,rotation_bound,rotation_nodes,"
+        "rotation_seconds,rotation_optimal\nb,guided,7,7,3,1.5,True\n",
+        encoding="utf-8")
+
+    assert report_module.results_path().name == "full.csv"
+    assert report_module.certification_path().name == "quick.csv"
