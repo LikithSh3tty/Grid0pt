@@ -861,6 +861,51 @@ def build(out_path: Path) -> Path:
             "chances to be wrong about the number the paper reports as cost.",
             s["body"]),
 
+        para("F14. The partial floor does not need its assumption after all",
+             s["finding"]),
+        para(
+            "F1 corrected section 9.1's covering bound; this replaces it where "
+            "it matters. The bound divides boundary forced through cell "
+            "interiors by the most one cell can hold, taken to be the cell "
+            "diagonal — which is true only when each cell carries a single "
+            "straight crossing, so the certificate has to measure that and "
+            "decline when it fails, on 9 of the 72 instances. Where it does not "
+            "decline it is frequently vacuous: on a 13×10 room at 3×3 it returns "
+            "a floor of 0 while every placement whatsoever leaves 8 partials.",
+            s["body"]),
+        para(
+            "The same construction that solves the complete count answers this "
+            "outright. A cell is complete when its corner lies in the region "
+            "eroded by the cell, and meets the region at all when its corner "
+            "lies in the region dilated by it, so",
+            s["body"]),
+        code("partial(dx, dy)  =  |lattice in the dilation|  -  |lattice in the erosion|",
+             s["mono"]),
+        para(
+            "and folding both modulo the lattice leaves one piecewise-constant "
+            "function on one torus to minimise. On that 13×10 room it returns 8.",
+            s["body"]),
+        para(
+            "One detail decides whether it is a floor at all, and a first "
+            "attempt got it backwards. For the complete count the pieces are "
+            "closed, depth is upper semi-continuous, and a MAXIMUM therefore "
+            "survives at a vertex of the arrangement — which is why that search "
+            "reads off vertices alone. A minimum does not: it can sit strictly "
+            "inside a face, so sampling vertices returns a value ABOVE the true "
+            "minimum, which is the wrong side for a floor and would certify a "
+            "result that is not optimal. Every cell of the arrangement is "
+            "sampled instead — faces by a representative point, edges by a "
+            "midpoint, vertices themselves — and the two tolerances are pushed "
+            "in opposite directions so the answer can only fall short.",
+            s["body"]),
+        para(
+            "It is reported beside the covering floor rather than replacing it, "
+            "because the two are different claims: this one needs no assumption "
+            "but speaks for one angle, and that one speaks for every angle but "
+            "can fail to apply. Merging them would take the weaker scope from "
+            "one and the weaker guarantee from the other.",
+            s["body"]),
+
         para("F12. The full corpus agrees with the quick one, including where "
              "that was inconvenient", s["finding"]),
         para(
@@ -1105,17 +1150,18 @@ def build(out_path: Path) -> Path:
             "so the request path does not run it. A curved boundary is its worst "
             "case: the count barely varies with angle, so nothing prunes on "
             "quality and the split runs down to the tolerance.",
-            "<b>The partial-cell floor still rests on an assumption.</b> It "
-            "over-counts where the boundary wiggles inside one cell, and reports "
-            "that rather than a number that does not hold. An exact replacement "
-            "looks close — a cell touches the region exactly when its corner is "
-            "in the dilation U (+) (-cell), making partials a difference of two "
-            "lattice counts — but the argument that makes the complete count "
-            "exact reverses for a minimum: depth is upper semi-continuous, so a "
-            "maximum survives at an arrangement vertex and a minimum does not. "
-            "Sampling vertices returns a value ABOVE the true minimum, which is "
-            "not a floor. It needs the arrangement's faces, and is not attempted "
-            "here on the strength of looking nearly right.",
+            "<b>The computed partial floor holds at one angle, not all of "
+            "them.</b> Partials are now minimised outright rather than bounded "
+            "by the covering argument — see F14 — but that is a statement about "
+            "the angle it was asked for. The covering bound remains the only one "
+            "claiming to hold across rotation, and it is the one that declines. "
+            "Extending the computed floor is the same branch and bound the "
+            "complete count already uses: over a window the dilation grows and "
+            "the erosion shrinks, which bounds their difference from below.",
+            "<b>And it is not tight.</b> Exact on four of six shapes tried, one "
+            "cell low on the other two, because the tolerance is pushed in the "
+            "safe direction on both sides at once. A floor one below the truth "
+            "is honest and still costs a cell of apparent gap.",
             "<b>A flat objective is the certificate's worst case, and the "
             "cost is arithmetic rather than a defect.</b> A 48-gon disc of "
             "radius 13 at 3×3 holds 45 cells at every angle, so no window is "
