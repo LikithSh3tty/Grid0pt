@@ -31,12 +31,23 @@ from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether,
 
 BACKEND = Path(__file__).resolve().parent.parent
 REPO = BACKEND.parent
-#: What `python -m evaluation.run` writes by default (`run.py`'s stem is
-#: "quick" for the quick corpus). It was pinned to a hand-named file, so a
-#: re-run left the tables rendering the previous run's data while the prose
-#: quoted the new one -- the exact drift this module's docstring promises not
-#: to allow.
-RESULTS = BACKEND / "evaluation" / "results" / "quick.csv"
+RESULTS_DIR = BACKEND / "evaluation" / "results"
+
+#: Result files in order of preference, fullest first -- the stems `run.py`
+#: writes for `--full` and for the default quick corpus.
+#:
+#: This has now drifted twice. First the path was pinned to a hand-named copy,
+#: so re-running the corpus left the tables on the old data while the prose
+#: quoted the new. Then the full corpus was run and the tables carried on
+#: rendering the quick one, because nothing here knew `full.csv` had appeared.
+#: Both times the document contradicted itself while every individual number in
+#: it was, at some point, correct.
+#:
+#: So the rule is preference rather than a fixed name, and every count in
+#: section 5 is derived from the rows actually loaded (see `corpus_sentence`)
+#: rather than written down beside them. A constant that can disagree with the
+#: data eventually will.
+RESULTS_STEMS = ("full", "quick")
 DEFAULT_OUT = REPO / "Grid0pt_Implementation_Report.pdf"
 
 INK = colors.HexColor("#1a1a1a")
@@ -165,11 +176,59 @@ def git(*args: str) -> str:
         return ""
 
 
-def load_results(path: Path = RESULTS) -> List[dict]:
-    if not path.exists():
+def results_path() -> Optional[Path]:
+    """The fullest results file present, or None."""
+    for stem in RESULTS_STEMS:
+        candidate = RESULTS_DIR / f"{stem}.csv"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_results(path: Optional[Path] = None) -> List[dict]:
+    path = path or results_path()
+    if path is None or not path.exists():
         return []
     with path.open(encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
+
+
+def headline_caption(rows: Sequence[dict]) -> str:
+    """Table 5's caption, read off the table rather than remembered beside it.
+
+    Same reason as `corpus_sentence`: this caption has already been wrong once,
+    quoting the cost and the margin from a run that was no longer the one being
+    rendered.
+    """
+    def mean_of(method: str, field: str, cast=float) -> Optional[float]:
+        values = [cast(r[field]) for r in rows if r["method"] == method]
+        return statistics.mean(values) if values else None
+
+    method_ev = mean_of("guided", "evaluations", int)
+    ladder_ev = mean_of("fixed15-s10", "evaluations", int)
+    method_short = mean_of("guided", "complete_vs_best", int)
+    ladder_short = mean_of("fixed15-s10", "complete_vs_best", int)
+    if None in (method_ev, ladder_ev, method_short, ladder_short):
+        return "Table 5. Every method over the corpus."
+
+    return (f"Table 5. Every method over the corpus. The full method averages "
+            f"{method_ev:.0f} evaluations; the rotation baseline it replaces "
+            f"needs {ladder_ev:.0f} for a result {method_short - ladder_short:.2f} "
+            f"cells worse.")
+
+
+def corpus_sentence(rows: Sequence[dict]) -> str:
+    """Describe the run being rendered, counted from it.
+
+    Written rather than stated so the introduction to the results table cannot
+    claim one corpus while the table below shows another -- which is the failure
+    this whole arrangement exists to prevent.
+    """
+    instances = {r["instance"] for r in rows}
+    methods = {r["method"] for r in rows}
+    families = {r.get("family", "") for r in rows} - {""}
+    return (f"{len(instances)} instances across {len(families)} families, "
+            f"{len(methods)} methods, {len(rows)} rows.")
 
 
 def per_method_rows(rows: Sequence[dict]) -> List[List[str]]:
@@ -870,21 +929,17 @@ def build(out_path: Path) -> Path:
     if rows:
         story += [
             para(
-                "The quick corpus: 16 instances across seven families, 16 "
-                "methods, 256 rows. Quality is reported as the mean shortfall "
-                "against the best result any method reached on the same instance, "
-                "so it is comparable across instances of different size. "
-                "“Known hit” counts instances whose optimum is proven "
-                "by construction and was reached.",
+                f"{corpus_sentence(rows)} Quality is reported as the mean "
+                "shortfall against the best result any method reached on the "
+                "same instance, so it is comparable across instances of "
+                "different size. “Known hit” counts instances whose "
+                "optimum is proven by construction and was reached.",
                 s["body"]),
             table(per_method_rows(rows),
                   [30 * mm, 20 * mm, 22 * mm, 14 * mm, 20 * mm, 20 * mm,
                    W - 126 * mm],
                   align_right=(2, 3, 5, 6)),
-            para("Table 5. Every method over the quick corpus. The full method "
-                 "reaches every proven optimum at 4 evaluations; the rotation "
-                 "baseline it replaces needs 1059 for a result 4.38 cells worse.",
-                 s["caption"]),
+            para(headline_caption(rows), s["caption"]),
         ]
 
         story += [

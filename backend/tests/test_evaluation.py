@@ -410,3 +410,39 @@ def test_the_per_method_table_scores_against_the_proven_optimum(certified_rows):
 
     assert "vs-optimal" in certified
     assert "vs-optimal" not in plain
+
+
+# --------------------------------------------------------------------------- #
+# the report reads what was actually run
+# --------------------------------------------------------------------------- #
+# Twice now the document has described one run while rendering another: first
+# because it was pinned to a hand-named CSV, then because the full corpus was
+# run and the tables carried on showing the quick one. The fix is not another
+# correct constant -- it is to stop having constants that can disagree with the
+# data, so the counts are derived from the rows the report actually loaded.
+
+def test_the_report_prefers_the_fullest_run_available(tmp_path, monkeypatch):
+    from evaluation import report as report_module
+
+    monkeypatch.setattr(report_module, "RESULTS_DIR", tmp_path)
+    (tmp_path / "quick.csv").write_text("instance,method\na,guided\n", encoding="utf-8")
+
+    assert report_module.results_path().name == "quick.csv"
+
+    (tmp_path / "full.csv").write_text("instance,method\na,guided\n", encoding="utf-8")
+
+    assert report_module.results_path().name == "full.csv"
+
+
+def test_the_report_says_which_corpus_it_rendered(rows):
+    """The sentence introducing the results table is generated from the rows,
+    so it cannot claim 16 instances while the table shows 72."""
+    from evaluation import report as report_module
+
+    described = report_module.corpus_sentence(
+        [{"instance": r.instance, "method": r.method, "family": r.family}
+         for r in rows])
+
+    assert "2 instances" in described
+    assert "4 methods" in described
+    assert f"{len(rows)} rows" in described
