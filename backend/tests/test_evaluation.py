@@ -516,9 +516,9 @@ def test_the_paper_scores_methods_against_the_proven_optimum(certified_rows):
     rows = paper_module.optimality_table([{**vars(r)} for r in certified_rows])
 
     header, *body = rows
-    assert header[1] == "reaches the optimum"
+    assert header[1] == "optimal on"
     guided = next(r for r in body if r[0] == "guided")
-    assert guided[1] == "2 of 2"
+    assert guided[1] == "2/2"
     sweep = next(r for r in body if r[0] == "uniform-s10")
     assert sweep[1] != guided[1]           # the sweep misses the tilted room
 
