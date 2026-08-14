@@ -1339,11 +1339,6 @@ def build(out_path: Path) -> Path:
     story += [
         para("7. Limitations and what is left", s["h1"]),
         *bullets([
-            "<b>The rotation certificate is opt-in, and priced accordingly.</b> "
-            "It costs tens of seconds against under one to merely find the angle, "
-            "so the request path does not run it. A curved boundary is its worst "
-            "case: the count barely varies with angle, so nothing prunes on "
-            "quality and the split runs down to the tolerance.",
             "<b>The computed partial floor holds at one angle, not all of "
             "them.</b> Partials are now minimised outright rather than bounded "
             "by the covering argument — see F14 — but that is a statement about "
@@ -1388,15 +1383,16 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>The exact refine's tail cost.</b> The pipeline now attains the "
-            "certified optimum on all 72 instances, because refining by proof "
-            "rather than by probing became the default once the corpus was "
-            "certified and showed it reaching 72 where probing reached 71. Its "
-            "median cost is indistinguishable — 0.21s against 0.23s, since the "
-            "bound is checked first and proves the refine pointless on most "
-            "shapes — but its tail is not: 14.9s at worst against 7.6s, on "
-            "traced outlines where the window stays open and the search runs. "
-            "Reducing that tail is the open engineering work.",
+            "<b>Certification remains the expensive operation.</b> The refine "
+            "that made the pipeline optimal on all 72 instances is now cheap — "
+            "median indistinguishable from probing, and a worst case of 5.9s "
+            "against probing's 9.7s once the depth computation stopped noding "
+            "duplicate outlines and querying its index once per candidate. "
+            "Proving the whole placement period is a different matter: it "
+            "examines many more windows, and a curved boundary is its worst "
+            "case, since the count barely varies with angle so nothing prunes on "
+            "quality. That is why the request path still does not run it "
+            "unasked.",
             "<b>The paper cites no prior work.</b> Step 5 of the roadmap is "
             "written and renders beside this document, but its section 10 "
             "records that it attributes nothing. The constructions it uses are "
