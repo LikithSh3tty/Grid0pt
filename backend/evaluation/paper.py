@@ -88,7 +88,14 @@ def headline(rows: Sequence[dict]) -> Dict[str, str]:
     guided = [r for r in certified if r["method"] == "guided"]
     ladder = [r for r in certified if r["method"] == "fixed15-s10"]
     misses = sum(1 for r in guided if int(r["complete"]) < int(r["rotation_bound"]))
+    # The PHRASE is derived, not only the count. A sentence written as "all but
+    # N" reads "all but 0" the moment the result improves past it, which is how
+    # a template quietly makes a better outcome sound worse.
+    attainment = ("every one of them" if misses == 0
+                  else f"all but {misses} of them"
+                  if misses > 1 else "all but one of them")
     return {
+        "attainment": attainment,
         "instances": str(len(instances)),
         "closed": str(len(closed)),
         "guided_misses": str(misses),
@@ -147,7 +154,7 @@ def build(out_path: Path = DEFAULT_OUT) -> Path:
             "rectilinear rooms, regions with obstacles, curved boundaries, "
             "randomly generated plans and image-traced outlines, all "
             f"{f['closed']} certify globally optimal. The full pipeline attains "
-            f"the certified optimum on all but {f['guided_misses']} instance, at "
+            f"the certified optimum on {f['attainment']}, at "
             f"a mean of {f['evaluations']} placement evaluations against "
             f"{f['ladder_evaluations']} for the fixed-angle baseline it replaces.",
             s["body"]),

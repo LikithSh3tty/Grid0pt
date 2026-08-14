@@ -360,6 +360,12 @@ MAX_CERTIFY_NODES = 600
 #:     probing   reaches the optimum on 71 of 72
 #:     proving   reaches it on 72 of 72
 #:
+#: Re-measured after this became the default and the depth computation was
+#: made cheaper, the shipped pipeline reaches 72 of 72 and the two probing
+#: ablations still miss the same single instance -- the traced tilted L at 2x3,
+#: where the optimum lies 0.03 degrees from the voted angle and the probes are
+#: 1.25 degrees apart.
+#:
 #: The cost argument that kept proving optional does not survive the same run.
 #: Median 0.21s against probing's 0.23s -- indistinguishable, because
 #: `rotation_bound` is checked first and proves the refine pointless on most
