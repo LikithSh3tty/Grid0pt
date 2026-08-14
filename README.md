@@ -201,7 +201,13 @@ python -m evaluation.run                          # quick corpus, minutes
 python -m evaluation.run --full                   # every tilt, cell geometry and seed
 python -m evaluation.run --with-reference         # add the brute-force yardstick
 python -m evaluation.run --report results/*.json  # combine chunked runs
+python -m evaluation.run --certify                # prove the optimum per instance
+
+python -m evaluation.paper                        # the paper
+python -m evaluation.report                       # the implementation record
 ```
+
+Two documents come out of the same run. The **paper** states the result — the construction, the proof, and what the corpus says about it. The **implementation report** is the record: what was built in what order, and the seventeen findings that corrected it along the way. Every figure in both is read from the run rather than written into the prose.
 
 Results are written to `backend/evaluation/results/` as CSV and JSON, and are not tracked.
 

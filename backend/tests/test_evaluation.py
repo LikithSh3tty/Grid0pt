@@ -488,3 +488,52 @@ def test_the_certification_table_comes_from_whichever_run_certified(tmp_path,
 
     assert report_module.results_path().name == "full.csv"
     assert report_module.certification_path().name == "quick.csv"
+
+
+# --------------------------------------------------------------------------- #
+# the paper
+# --------------------------------------------------------------------------- #
+# Its abstract states three numbers -- how many instances certified, how many
+# the pipeline reaches, at what cost. They are computed from the run for the
+# same reason every other figure in these documents is: numbers written into
+# prose beside the data have gone stale three times in this project's week.
+
+def test_the_paper_counts_its_abstract_from_the_run(certified_rows):
+    from evaluation import paper as paper_module
+
+    facts = paper_module.headline([{**vars(r)} for r in certified_rows])
+
+    assert facts["instances"] == "2"
+    assert facts["closed"] == "2"
+    assert facts["guided_misses"] == "0"
+
+
+def test_the_paper_scores_methods_against_the_proven_optimum(certified_rows):
+    """The table the certificate exists to make printable: a method's standing
+    against the truth rather than against whatever else was run."""
+    from evaluation import paper as paper_module
+
+    rows = paper_module.optimality_table([{**vars(r)} for r in certified_rows])
+
+    header, *body = rows
+    assert header[1] == "reaches the optimum"
+    guided = next(r for r in body if r[0] == "guided")
+    assert guided[1] == "2 of 2"
+    sweep = next(r for r in body if r[0] == "uniform-s10")
+    assert sweep[1] != guided[1]           # the sweep misses the tilted room
+
+
+def test_the_paper_says_nothing_it_cannot_measure(rows):
+    """Without a certified run there is no proven optimum to score against, so
+    the table is withheld rather than filled with the next best thing."""
+    from evaluation import paper as paper_module
+
+    assert paper_module.optimality_table([{**vars(r)} for r in rows]) is None
+
+
+def test_both_documents_render(tmp_path):
+    from evaluation import paper as paper_module
+    from evaluation import report as report_module
+
+    assert paper_module.build(tmp_path / "paper.pdf").exists()
+    assert report_module.build(tmp_path / "report.pdf").exists()

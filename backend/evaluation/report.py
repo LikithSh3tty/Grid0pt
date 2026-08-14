@@ -97,10 +97,16 @@ def build_styles() -> Dict[str, ParagraphStyle]:
 class Doc(BaseDocTemplate):
     """Two-part page: content frame plus a footer with the page number."""
 
-    def __init__(self, path: str, **kw):
+    def __init__(self, path: str, running_head: str = "implementation report",
+                 **kw):
+        # The running head is a parameter because two documents share this
+        # template now, and a paper stamped "implementation report" on every
+        # page is the kind of error nobody reads closely enough to catch.
+        self.running_head = running_head
         super().__init__(path, pagesize=A4, leftMargin=22 * mm,
                          rightMargin=22 * mm, topMargin=20 * mm,
-                         bottomMargin=18 * mm, title="Grid0pt implementation report",
+                         bottomMargin=18 * mm,
+                         title=f"Grid0pt {running_head}",
                          author="Grid0pt", **kw)
         frame = Frame(self.leftMargin, self.bottomMargin,
                       self.width, self.height, id="body")
@@ -118,7 +124,7 @@ class Doc(BaseDocTemplate):
             canvas.line(doc.leftMargin, A4[1] - 15 * mm,
                         A4[0] - doc.rightMargin, A4[1] - 15 * mm)
             canvas.drawString(doc.leftMargin, A4[1] - 13 * mm,
-                              "Grid0pt — implementation report")
+                              f"Grid0pt — {doc.running_head}")
         canvas.restoreState()
 
 
