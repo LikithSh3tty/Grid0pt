@@ -1050,15 +1050,18 @@ def build(out_path: Path) -> Path:
             "from 16 is a conclusion about 16.",
             s["body"]),
         para(
-            "It confirms F9 at four times the size, which is the finding it "
-            "would have been most convenient to overturn: solving dx as well as "
-            "dy changes the complete count on NONE of the 72 instances — the "
-            "dx-enumerating ablation is worse on zero and better on zero. The "
-            "counterexamples that motivated the work are still only the ones "
-            "found by hunting for them. What the corpus does confirm is the "
-            "cost, at 4 evaluations against 29, and it now also shows the "
-            "erosion solver beating the full offset enumeration on quality: both "
-            "disc instances come back 61 against 62.",
+            "It first appeared to confirm F9 at four times the size: scored "
+            "against the best result any method reached, solving dx as well as "
+            "dy changed the complete count on none of the 72. Certifying the "
+            "corpus overturns that, and the reason is instructive. Against a "
+            "PROVEN optimum the dx-enumerating ablation falls short on three "
+            "instances where the full method does not — all three traced tilted "
+            "Ls, at every cell geometry. Scoring against the best anyone found "
+            "could not see it, because on those instances nothing else found the "
+            "optimum either. A relative yardstick cannot distinguish "
+            "“everyone reached it” from “everyone missed it "
+            "together”, which is the whole reason the certificate was worth "
+            "building.",
             s["body"]),
         para(
             "The partial-cell certificate's assumption holds a little more often "

@@ -27,6 +27,14 @@ read there: one classifying evaluation decides whether to spend eight solves.
 
 These tests assert both halves: that it fires where the refine is provably
 pointless, and that it stays quiet while upside remains.
+
+Every call here names refine="grid" explicitly. The stop exists to keep the
+PROBING refine from spending its budget where there is nothing to reclaim,
+and the pipeline's default refine is no longer that one -- it proves the
+window instead, and deliberately ignores the stop, because the stop's own
+premise is false for it: a fringe with nothing left to reclaim can still sit
+a hundredth of a degree from a better angle. Leaving these calls on the
+default would measure a refine the stop does not gate.
 """
 import pytest
 
@@ -141,8 +149,8 @@ def test_the_refine_is_skipped_once_the_fringe_is_flush(tilt):
     """
     packer = packer_for(room(tilt=tilt))
 
-    stopped, _ = packer.optimize_guided()
-    spent, _ = packer.optimize_guided(recover_min=0.0)
+    stopped, _ = packer.optimize_guided(refine="grid")
+    spent, _ = packer.optimize_guided(refine="grid", recover_min=0.0)
 
     assert stopped.complete == spent.complete
     assert stopped.rotation_vote.evaluations < spent.rotation_vote.evaluations / 2
@@ -157,8 +165,8 @@ def test_the_stop_stays_quiet_while_upside_remains():
     """
     packer = packer_for(trapezoid())
 
-    stopped, _ = packer.optimize_guided()
-    spent, _ = packer.optimize_guided(recover_min=0.0)
+    stopped, _ = packer.optimize_guided(refine="grid")
+    spent, _ = packer.optimize_guided(refine="grid", recover_min=0.0)
 
     assert stopped.rotation_vote.evaluations == spent.rotation_vote.evaluations + 1
 
@@ -167,8 +175,8 @@ def test_the_stop_is_disabled_at_zero():
     """recover_min = 0 restores the note's un-gated pipeline for the ablation."""
     packer = packer_for(room(tilt=23.0))
 
-    off, _ = packer.optimize_guided(recover_min=0.0)
-    on, _ = packer.optimize_guided(recover_min=RECOVERABLE_AREA_MIN)
+    off, _ = packer.optimize_guided(refine="grid", recover_min=0.0)
+    on, _ = packer.optimize_guided(refine="grid", recover_min=RECOVERABLE_AREA_MIN)
 
     assert off.rotation_vote.evaluations > on.rotation_vote.evaluations
 
@@ -185,8 +193,8 @@ def test_the_stop_never_costs_a_complete_cell(name, shape):
     stop declines to fire is bounded by the one probe it spent asking."""
     packer = packer_for(shape)
 
-    stopped, _ = packer.optimize_guided()
-    spent, _ = packer.optimize_guided(recover_min=0.0)
+    stopped, _ = packer.optimize_guided(refine="grid")
+    spent, _ = packer.optimize_guided(refine="grid", recover_min=0.0)
 
     assert stopped.complete == spent.complete, name
     assert stopped.rotation_vote.evaluations <= spent.rotation_vote.evaluations + 1
@@ -202,7 +210,7 @@ def test_the_probe_the_stop_spends_is_counted():
     packer = packer_for(room(tilt=23.0))
 
     unrefined, _ = packer.optimize_guided(refine="none")
-    stopped, _ = packer.optimize_guided()
+    stopped, _ = packer.optimize_guided(refine="grid")
 
     # Same solves, plus the single probe that decided against the refine.
     assert (stopped.rotation_vote.evaluations

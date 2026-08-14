@@ -562,3 +562,29 @@ def test_the_gate_never_talks_the_refine_out_of_a_real_gain():
     gated, _ = instance.packer().optimize_guided(refine="certified")
 
     assert gated.complete == 83
+
+
+def test_the_pipeline_refines_by_proving_by_default():
+    """Certifying the whole corpus is what settled this.
+
+    Scored against proven optima across all 72 instances, the exact refine
+    reaches every one and the probing refine misses one. The cost argument that
+    kept it optional does not survive the measurement either: median 0.21s
+    against 0.23s, because the bound is checked first and short-circuits the
+    work on shapes it cannot help. What it does cost is the tail -- 14.9s at
+    worst against 7.6s -- on traced outlines where the window stays open.
+    """
+    from grid_packer import REFINE_METHOD
+
+    assert REFINE_METHOD == "certified"
+
+
+def test_the_default_pipeline_now_reaches_the_last_corpus_instance():
+    from evaluation import corpus
+
+    instance = [i for i in corpus.build(quick=False)
+                if i.name == "traced-l23-2x3"][0]
+
+    best, _ = instance.packer().optimize_guided()
+
+    assert best.complete == 83          # proven optimal

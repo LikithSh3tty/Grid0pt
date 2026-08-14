@@ -349,10 +349,27 @@ MAX_CERTIFY_NODES = 600
 #: converges to an arbitrary interior point rather than to a maximum. Measured
 #: over the instances in `tests/test_guided_rotation.py` at an equal probe
 #: budget, golden-section never beat the un-refined candidate, and never beat
-#: plain uniform sampling of the same window. The default is therefore "grid",
-#: which is what the evidence supports; "golden" is kept runnable so the paper's
-#: ablation can report the comparison rather than assert it.
-REFINE_METHOD = "grid"
+#: plain uniform sampling of the same window. "golden" is kept runnable so the
+#: paper's ablation can report that comparison rather than assert it.
+#:
+#: The default is "certified", which refines by branch and bound over the
+#: window instead of probing it, and that is a measurement rather than a
+#: preference. Certifying every instance of the full corpus gives a proven
+#: optimum to score against, and against it:
+#:
+#:     probing   reaches the optimum on 71 of 72
+#:     proving   reaches it on 72 of 72
+#:
+#: The cost argument that kept proving optional does not survive the same run.
+#: Median 0.21s against probing's 0.23s -- indistinguishable, because
+#: `rotation_bound` is checked first and proves the refine pointless on most
+#: shapes before any work is done. What it does cost is the tail: 1.23s mean
+#: against 0.82s, and 14.9s at worst against 7.6s, on traced outlines where the
+#: bound stays open and the search actually runs.
+#:
+#: An earlier reading said four times the mean, which was taken beside a
+#: full-corpus run and measured the contention rather than the refine.
+REFINE_METHOD = "certified"
 
 
 class PartialClass(str, Enum):
