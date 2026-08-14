@@ -815,19 +815,34 @@ def build(out_path: Path) -> Path:
             "900, for a better result than the last of them.",
             s["body"]),
 
-        para("F9. The corpus does not contain the instance that motivated the "
-             "second axis", s["finding"]),
+        para("F9. The corpus hid the instance that motivated the second axis, "
+             "until it was certified", s["finding"]),
         para(
-            "Reported because it qualifies the headline. Solving dx as well as dy "
-            "changes the complete count on none of the sixteen corpus instances "
-            "— the dx-enumerating ablation ties the full method everywhere here — "
-            "so the corpus alone would not have justified the work. The "
-            "counterexamples were found by searching for them, and are pinned in "
-            "the test suite rather than in the corpus. What the corpus does "
-            "measure is the other two consequences, and both are real: cost falls "
-            "roughly ninefold at equal quality, and the partial count improves "
-            "where the complete count cannot. On the disc, solving both axes "
-            "returns 62 complete and 38 partial against the dx-enumerating "
+            "This finding was written to qualify the headline, and it has since "
+            "been overturned by a better measurement — which is worth showing "
+            "rather than quietly rewriting. As first measured, solving dx as "
+            "well as dy changed the complete count on none of the corpus "
+            "instances: the dx-enumerating ablation tied the full method "
+            "everywhere, so the corpus alone would not have justified the work, "
+            "and the counterexamples lived only in the test suite.",
+            s["body"]),
+        para(
+            "That reading scored every method against the best result any method "
+            "reached. Certified, the corpus scores against a proven optimum "
+            "instead, and the dx-enumerating ablation falls short on three "
+            "instances where the full method does not — the traced tilted L at "
+            "all three cell geometries. The tie was real and told nothing: on "
+            "those instances nothing else reached the optimum either, and a "
+            "relative yardstick cannot distinguish “everyone reached "
+            "it” from “everyone missed it together”. That "
+            "distinction is the entire reason the certificate was built, and the "
+            "first thing it did was correct this page.",
+            s["body"]),
+        para(
+            "The other two consequences were never in doubt and remain: cost "
+            "falls roughly ninefold at equal quality, and the partial count "
+            "improves where the complete count cannot — on the disc, solving both "
+            "axes returns 62 complete and 38 partial against the dx-enumerating "
             "solver's 62 and 39, at one evaluation against thirty.",
             s["body"]),
         para(
@@ -840,14 +855,16 @@ def build(out_path: Path) -> Path:
         para("F10. The vote was right every time — and now that is a theorem",
              s["finding"]),
         para(
-            "Certifying the whole quick corpus closes the gap on all sixteen "
-            "instances: every one returns a bound equal to what the pipeline "
-            "achieved, so on none of them does any placement of that grid at any "
-            "angle do better. All eight instances with an optimum proven by "
-            "construction are reached, and the other eight — curved, random and "
-            "image-traced, where no optimum was known — are now settled too, "
-            "which is the first time anything in this work has been able to say "
-            "so about them.",
+            "Certifying the FULL corpus closes the gap on all 72 instances: "
+            "every one returns a bound equal to what the pipeline achieved, so "
+            "on none of them does any placement of that grid at any angle do "
+            "better. The instances with an optimum proven by construction are "
+            "reached, and the rest — curved, random and image-traced, where no "
+            "optimum was known — are settled too, which is the first time "
+            "anything in this work has been able to say so about them. It also "
+            "ran the certificate over 56 instances it had never seen, on the "
+            "families and cell geometries most likely to break it, without "
+            "failing to close one.",
             s["body"]),
         para(
             "The cost profile is the interesting part. Most instances close in 9 "
@@ -856,9 +873,10 @@ def build(out_path: Path) -> Path:
             "boundaries cost more, and used to cost far more: a disc took 239 "
             "windows when this was first measured and takes 29 now, since a "
             "polygonised disc repeats every 7.5 degrees and the search no longer "
-            "re-derives the same answer twelve times over. 240 windows and 279 "
-            "seconds for the corpus, against 522 and 862 before the region's own "
-            "symmetry was used.",
+            "re-derives the same answer twelve times over. 1193 windows and 1560 "
+            "seconds for all 72 instances — an average of 17 windows each, "
+            "against the 33 the sixteen quick instances needed before the "
+            "region's own symmetry was used.",
             s["body"]),
         para(
             "This also retires a hedge. Section F4 argued the refine rarely earns "
