@@ -10,4 +10,5 @@ backend/evaluation/results/
 # implementation report. `python -m evaluation.report` regenerates the latter.
 Grid0pt_Method_and_Strategy.pdf
 Grid0pt_Implementation_Report.pdf
+Grid0pt_Paper.pdf
 .gitattributes

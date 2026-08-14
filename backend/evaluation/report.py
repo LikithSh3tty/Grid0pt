@@ -1388,16 +1388,24 @@ def build(out_path: Path) -> Path:
             "step over a sharp optimum, which is the weakness the whole method "
             "exists to remove, so it is reported as the best anyone found and "
             "never as the optimum.",
-            "<b>One instance misses under the SHIPPED refine.</b> Against the "
-            "proven optimum the default pipeline misses on 1 of 72 — "
-            "traced-l23-2x3, one cell under 83 — down from 7 before the vote "
-            "weight was measured and the quarter turn added. "
-            "<font face='Courier'>refine=\"certified\"</font> reaches it, and "
-            "is not the default because it gains that one instance and no other; "
-            "see F17. So this is a choice already made rather than a gap still "
-            "open, and it is listed to keep the choice visible.",
-            "<b>Step 5 of the roadmap is the paper.</b> Not code, not attempted "
-            "here.",
+            "<b>The exact refine's tail cost.</b> The pipeline now attains the "
+            "certified optimum on all 72 instances, because refining by proof "
+            "rather than by probing became the default once the corpus was "
+            "certified and showed it reaching 72 where probing reached 71. Its "
+            "median cost is indistinguishable — 0.21s against 0.23s, since the "
+            "bound is checked first and proves the refine pointless on most "
+            "shapes — but its tail is not: 14.9s at worst against 7.6s, on "
+            "traced outlines where the window stays open and the search runs. "
+            "Reducing that tail is the open engineering work.",
+            "<b>The paper cites no prior work.</b> Step 5 of the roadmap is "
+            "written and renders beside this document, but its section 10 "
+            "records that it attributes nothing. The constructions it uses are "
+            "standard — Minkowski operations, planar arrangements, lattice point "
+            "counting, interval branch and bound — and a submitted version must "
+            "cite them along with prior treatments of grid placement and "
+            "rectangle packing. The literature search has not been done, and "
+            "plausible-looking citations would have been worse than the "
+            "admission.",
         ], s["bullet"]),
     ]
 
