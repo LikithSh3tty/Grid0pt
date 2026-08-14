@@ -1403,9 +1403,12 @@ def build(out_path: Path) -> Path:
             "standard — Minkowski operations, planar arrangements, lattice point "
             "counting, interval branch and bound — and a submitted version must "
             "cite them along with prior treatments of grid placement and "
-            "rectangle packing. The literature search has not been done, and "
-            "plausible-looking citations would have been worse than the "
-            "admission.",
+            "rectangle packing. That search is deliberately deferred: the paper "
+            "serves as a reference document while the work continues, and the "
+            "submitted version is to be written once it is finished. The gap is "
+            "recorded so whoever writes that version begins from an accurate "
+            "account of what has been attributed, rather than from "
+            "plausible-looking citations that were never checked.",
         ], s["bullet"]),
     ]
 
