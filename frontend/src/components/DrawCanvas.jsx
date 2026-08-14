@@ -96,14 +96,23 @@ export default function DrawCanvas({ polygons, onPolygonsChange }) {
   const ys = allDrawn.flat().map((p) => p[1]);
   const minX = Math.min(0, ...xs);
   const minY = Math.min(0, ...ys);
-  const maxX = Math.max(VIEW_SIZE, ...xs);
-  const maxY = Math.max(VIEW_SIZE, ...ys);
+  // A SQUARE view box, matched by a square element in the stylesheet, so the
+  // browser has nothing to letterbox. With a wide element and a square box it
+  // centres the drawable square and leaves margins, and a click in a margin
+  // maps outside the box entirely -- measured at x from -36 to 124 against a
+  // nominal 0 to 100. Nothing looked wrong, because the box then grew to
+  // include the stray points; what changed silently was the SCALE, so the same
+  // rectangle drawn at two window widths meant two different coordinate ranges
+  // and therefore two different cell counts.
+  const side = Math.max(VIEW_SIZE,
+                        ...xs.map((x) => x - minX),
+                        ...ys.map((y) => y - minY));
 
   return (
     <div className="draw-panel">
       <svg
         ref={svgRef}
-        viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
+        viewBox={`${minX} ${minY} ${side} ${side}`}
         className="draw-svg"
         onClick={handleCanvasClick}
       >

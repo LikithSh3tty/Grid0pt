@@ -242,9 +242,14 @@ button:disabled {
   margin-bottom: 1.5rem;
 }
 
+/* Square, and capped, so the square view box fills it exactly. A wide element
+   with a square box is letterboxed, and clicks in the margins then land outside
+   the coordinate space the drawing is expressed in. */
 .draw-svg {
-  width: 100%;
-  height: 22rem;
+  width: min(100%, 34rem);
+  aspect-ratio: 1 / 1;
+  display: block;
+  margin: 0 auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
