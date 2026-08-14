@@ -363,9 +363,14 @@ MAX_CERTIFY_NODES = 600
 #: The cost argument that kept proving optional does not survive the same run.
 #: Median 0.21s against probing's 0.23s -- indistinguishable, because
 #: `rotation_bound` is checked first and proves the refine pointless on most
-#: shapes before any work is done. What it does cost is the tail: 1.23s mean
-#: against 0.82s, and 14.9s at worst against 7.6s, on traced outlines where the
-#: bound stays open and the search actually runs.
+#: shapes before any work is done.
+#:
+#: Its tail was the remaining objection and is now smaller than the probing
+#: refine's. Measured at 14.9s worst case against 7.6s, the depth computation
+#: was found to be spending most of a bound call noding a hundred copies of one
+#: square and issuing a separate spatial query per candidate; deduplicating the
+#: linework and querying the tree once brought the worst traced instance to
+#: 5.9s, against 9.7s for probing on the instance that is worst for it.
 #:
 #: An earlier reading said four times the mean, which was taken beside a
 #: full-corpus run and measured the contention rather than the refine.
@@ -1244,6 +1249,29 @@ def _geom_coords(geom) -> Iterator[Tuple[float, float]]:
             yield from _geom_coords(part)
 
 
+def _distinct_outlines(tiles: Sequence) -> List:
+    """The tiles' linework with duplicates removed.
+
+    Folding a region onto one cell of the grid produces one piece per lattice
+    cell it meets, and the pieces covering the region's INTERIOR are all the
+    same full square. Noding a hundred copies of one square costs what noding a
+    hundred distinct outlines costs, and yields the same arrangement -- a
+    repeated line introduces no crossing that its first copy did not.
+    Deduplication is therefore exact rather than approximate, and it is the
+    linework only: the depth count still sees every tile, because two identical
+    pieces are two lattice points and must be counted twice.
+    """
+    seen = set()
+    out: List = []
+    for tile in tiles:
+        for line in _boundary_lines(tile):
+            key = shapely.to_wkb(shapely.normalize(line))
+            if key not in seen:
+                seen.add(key)
+                out.append(line)
+    return out
+
+
 def _ranked_offsets(tiles: Sequence, cw: float, ch: float,
                     tol: float = _GEOM_TOL) -> List[Tuple[int, float, float]]:
     """Every offset worth trying, deepest overlap first.
@@ -1279,9 +1307,7 @@ def _ranked_offsets(tiles: Sequence, cw: float, ch: float,
     if not tiles:
         return [(0, 0.0, 0.0)]
 
-    lines: List = []
-    for tile in tiles:
-        lines.extend(_boundary_lines(tile))
+    lines = _distinct_outlines(tiles)
 
     # Reduced modulo the period but NOT rounded: `_wrap`'s quantisation to
     # `_COORD_DECIMALS` would shift a candidate off the very piece edge it was
@@ -1295,10 +1321,18 @@ def _ranked_offsets(tiles: Sequence, cw: float, ch: float,
             for x, y in _geom_coords(tile):
                 candidates.add((x % cw, y % ch))
 
+    # One vectorised query rather than one per candidate. The predicate and the
+    # tolerance are identical either way; what changes is that a few hundred
+    # Python-level round trips into GEOS become a single call returning the
+    # (candidate, tile) pairs, which numpy then counts. On a traced outline at a
+    # fine cell size this stage was 0.285s of a 0.331s bound computation, and
+    # the bound is what the rotation certificate spends nearly all its time on.
+    ordered = sorted(candidates)
     tree = STRtree(list(tiles))
-    ranked = [(int(len(tree.query(Point(u, v), predicate="dwithin",
-                                  distance=tol))), u, v)
-              for u, v in candidates]
+    points = shapely.points(np.array(ordered, dtype=float))
+    pairs = tree.query(points, predicate="dwithin", distance=tol)
+    depths = np.bincount(pairs[0], minlength=len(ordered))
+    ranked = [(int(depths[i]), u, v) for i, (u, v) in enumerate(ordered)]
     # Deepest first; ties ordered by offset so the result is deterministic and
     # the smallest offset wins, matching the other solvers' tie behaviour.
     ranked.sort(key=lambda r: (-r[0], r[1], r[2]))
@@ -1320,9 +1354,7 @@ def _arrangement_samples(tiles: Sequence, cw: float, ch: float
     graph and returns the faces of the arrangement rather than the outlines it
     was given.
     """
-    lines: List = []
-    for tile in tiles:
-        lines.extend(_boundary_lines(tile))
+    lines = _distinct_outlines(tiles)
     lines.append(box(0.0, 0.0, cw, ch).boundary)
 
     noded = unary_union(lines)
@@ -2345,15 +2377,25 @@ class GridPacker:
         complete_tree = STRtree(complete_tiles) if complete_tiles else None
         touching_tree = STRtree(touching_tiles)
 
+        # Vectorised for the same reason as `_ranked_offsets`: this samples every
+        # cell of the arrangement rather than only its vertices, so it has more
+        # candidates to score, not fewer.
+        samples = _arrangement_samples(complete_tiles + touching_tiles,
+                                       self.cw, self.ch)
+        points = shapely.points(np.array(samples, dtype=float))
+        touching_pairs = touching_tree.query(points, predicate="intersects")
+        touching_counts = np.bincount(touching_pairs[0], minlength=len(samples))
+        if complete_tree is not None:
+            complete_pairs = complete_tree.query(points, predicate="dwithin",
+                                                 distance=_GEOM_TOL)
+            complete_counts = np.bincount(complete_pairs[0],
+                                          minlength=len(samples))
+        else:
+            complete_counts = np.zeros(len(samples), dtype=int)
+
         best = None
-        for u, v in _arrangement_samples(complete_tiles + touching_tiles,
-                                         self.cw, self.ch):
-            point = Point(u, v)
-            touching = len(touching_tree.query(point, predicate="intersects"))
-            complete = (len(complete_tree.query(point, predicate="dwithin",
-                                                distance=_GEOM_TOL))
-                        if complete_tree else 0)
-            value = touching - complete
+        for i, (u, v) in enumerate(samples):
+            value = int(touching_counts[i] - complete_counts[i])
             if best is None or value < best[0]:
                 best = (value, u, v)
         if best is None:

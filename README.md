@@ -213,6 +213,5 @@ Results are written to `backend/evaluation/results/` as CSV and JSON, and are no
 
 ## Things I'd add next
 
-- **The exact refine's tail cost.** It is the default now — certifying all 72 corpus instances showed it reaching the proven optimum on every one against probing's 71, at an identical median (0.21s vs 0.23s) because the bound short-circuits it where it cannot help. What it costs is the tail: 14.9s at worst against 7.6s, on traced outlines where the window stays open. Shrinking that is the open work.
 - **The paper cites no prior work — deliberately, for now.** It renders from `python -m evaluation.paper` and serves as a reference document while the work continues; the real write-up comes once the project is finished. Its final section records the gap so that whoever writes that version starts from an accurate account of what has and has not been attributed. Not an open task.
 - **A shape flat in the angle without being symmetric** would still split to the tolerance and nothing would prune it. Flatness in practice comes *from* symmetry, which is now exploited — an ellipse, a blob and a half-disc were checked and all three vary by two cells across the period. If such a shape exists the search reports `exhausted: false` rather than misleading, so this is a cost worth knowing about rather than a correctness gap.
